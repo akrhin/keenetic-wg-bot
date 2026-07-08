@@ -36,7 +36,7 @@ func New(iface string) *Manager {
 
 // Up поднимает интерфейс через wg-quick up.
 func (m *Manager) Up(ctx context.Context) error {
-	//nolint:gosec // m.iface comes from local config, not user input
+	// #nosec G204 — m.iface comes from local config, not user input
 	cmd := exec.CommandContext(ctx, "wg-quick", "up", m.iface)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -47,7 +47,7 @@ func (m *Manager) Up(ctx context.Context) error {
 
 // Down опускает интерфейс через wg-quick down.
 func (m *Manager) Down(ctx context.Context) error {
-	//nolint:gosec // m.iface comes from local config, not user input
+	// #nosec G204 — m.iface comes from local config, not user input
 	cmd := exec.CommandContext(ctx, "wg-quick", "down", m.iface)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -58,7 +58,7 @@ func (m *Manager) Down(ctx context.Context) error {
 
 // Show возвращает статус интерфейса через wg show.
 func (m *Manager) Show(ctx context.Context) (*Status, error) {
-	//nolint:gosec // m.iface comes from local config, not user input
+	// #nosec G204 — m.iface comes from local config, not user input
 	cmd := exec.CommandContext(ctx, "wg", "show", m.iface, "dump")
 	out, err := cmd.Output()
 	if err != nil {
