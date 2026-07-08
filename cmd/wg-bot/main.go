@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// Инициализация Telegram API (через прокси, если настроен)
-	httpClient, err := proxy.NewHTTPClient(&cfg.Proxy)
+	httpClient, err := proxy.NewHTTPClient(cfg)
 	if err != nil {
 		log.Fatalf("[wg-bot] proxy: %v", err)
 	}

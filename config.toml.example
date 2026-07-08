@@ -18,10 +18,13 @@ broadcast = "192.168.1.255"
 auto_off_minutes = 30
 state_file = "/opt/etc/wg-bot/scheduler.state"
 
+[network]
+# prefer_ipv6 = true   # резолвить AAAA (IPv6) раньше A (IPv4) — и для прокси, и без
+
 [proxy]
 # Прокси для Telegram API (SOCKS5 с логином/паролем или без).
 # Закомментируй или удали секцию, если прокси не нужен.
+enabled = true
 url = "socks5://192.168.1.1:1080"
 username = "login"
 password = "password"
-# prefer_ipv6 = true   # раскомментируй, если прокси отдаёт IPv6 в приоритете

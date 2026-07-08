@@ -17,7 +17,12 @@ type Config struct {
 	WireGuard WireGuardConfig `toml:"wireguard"`
 	WOL       WOLConfig       `toml:"wol"`
 	Scheduler SchedulerConfig `toml:"scheduler"`
+	Network   NetworkConfig   `toml:"network"`
 	Proxy     ProxyConfig     `toml:"proxy"`
+}
+
+type NetworkConfig struct {
+	PreferIPv6 bool `toml:"prefer_ipv6"`
 }
 
 type TelegramConfig struct {
@@ -53,15 +58,15 @@ type SchedulerConfig struct {
 
 // ProxyConfig — прокси для Telegram API (SOCKS5 с авторизацией или без).
 type ProxyConfig struct {
-	URL         string `toml:"url"`
-	Username    string `toml:"username"`
-	Password    string `toml:"password"`
-	PreferIPv6  bool   `toml:"prefer_ipv6"`
+	Enabled  bool   `toml:"enabled"`
+	URL      string `toml:"url"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
 }
 
-// Enabled возвращает true, если прокси настроен.
-func (p *ProxyConfig) Enabled() bool {
-	return p.URL != ""
+// Enabled возвращает true, если прокси включён и настроен.
+func (p *ProxyConfig) IsEnabled() bool {
+	return p.Enabled && p.URL != ""
 }
 
 // Load читает и валидирует конфиг.

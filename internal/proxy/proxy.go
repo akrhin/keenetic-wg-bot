@@ -14,65 +14,59 @@ import (
 	"github.com/akrhin/keenetic-wg-bot/internal/config"
 )
 
-// NewHTTPClient создаёт http.Client с SOCKS5-прокси.
-// Если cfg.Proxy.URL пуст, возвращает стандартный клиент.
-func NewHTTPClient(cfg *config.ProxyConfig) (*http.Client, error) {
-	// Базовый диалектор: стандартный или IPv6-first
-	var base proxy.Dialer = proxy.Direct
-	if cfg.PreferIPv6 {
-		base = &ipv6FirstDialer{next: proxy.Direct}
-	}
-
-	if !cfg.Enabled() {
-		transport := &http.Transport{
-			DialContext:           base.(proxy.ContextDialer).DialContext,
-			ResponseHeaderTimeout: 30 * time.Second,
+// NewHTTPClient creates http.Client with optional SOCKS5 proxy and/or IPv6-first dial.
+func NewHTTPClient(cfg *config.Config) (*http.Client, error) {
+	// Без прокси — обычный клиент (с опциональным IPv6-first)
+	if !cfg.Proxy.IsEnabled() {
+		if cfg.Network.PreferIPv6 {
+			return &http.Client{
+				Transport: &http.Transport{
+					DialContext:           (&ipv6FirstDialer{}).DialContext,
+					ResponseHeaderTimeout: 30 * time.Second,
+				},
+				Timeout: 30 * time.Second,
+			}, nil
 		}
-		return &http.Client{
-			Transport: transport,
-			Timeout:   30 * time.Second,
-		}, nil
+		return &http.Client{Timeout: 30 * time.Second}, nil
 	}
 
-	proxyURL, err := url.Parse(cfg.URL)
+	// Прокси настроен и включён
+	proxyURL, err := url.Parse(cfg.Proxy.URL)
 	if err != nil {
 		return nil, fmt.Errorf("proxy url parse: %w", err)
 	}
 
 	var auth *proxy.Auth
-	if cfg.Username != "" {
+	if cfg.Proxy.Username != "" {
 		auth = &proxy.Auth{
-			User:     cfg.Username,
-			Password: cfg.Password,
+			User:     cfg.Proxy.Username,
+			Password: cfg.Proxy.Password,
 		}
 	}
 
 	// Базовый диалектор для SOCKS5
-	var baseDialer proxy.Dialer = proxy.Direct
-	if cfg.PreferIPv6 {
-		baseDialer = &ipv6FirstDialer{next: proxy.Direct}
+	var base proxy.Dialer = proxy.Direct
+	if cfg.Network.PreferIPv6 {
+		base = &ipv6FirstDialer{next: proxy.Direct}
 	}
 
-	dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, auth, baseDialer)
+	dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, auth, base)
 	if err != nil {
 		return nil, fmt.Errorf("proxy socks5 dialer: %w", err)
 	}
 
 	ctxDialer := dialer.(proxy.ContextDialer)
 
-	transport := &http.Transport{
-		DialContext:           ctxDialer.DialContext,
-		ResponseHeaderTimeout: 30 * time.Second,
-	}
-
 	return &http.Client{
-		Transport: transport,
-		Timeout:   60 * time.Second,
+		Transport: &http.Transport{
+			DialContext:           ctxDialer.DialContext,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+		Timeout: 60 * time.Second,
 	}, nil
 }
 
-// ipv6FirstDialer — обёртка над proxy.Dialer, которая при коннекте к хосту
-// резолвит адреса и пробует IPv6 (AAAA) раньше IPv4 (A).
+// ipv6FirstDialer — обёртка, резолвит AAAA (IPv6) раньше A (IPv4).
 type ipv6FirstDialer struct {
 	next proxy.Dialer
 }
@@ -84,15 +78,12 @@ func (d *ipv6FirstDialer) Dial(network, addr string) (net.Conn, error) {
 func (d *ipv6FirstDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		// fallback
-		conn, dialErr := d.next.(proxy.ContextDialer).DialContext(ctx, network, addr)
-		return conn, dialErr
+		return d.resolveAndDial(ctx, network, addr)
 	}
 
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil || len(ips) == 0 {
-		conn, dialErr := d.next.(proxy.ContextDialer).DialContext(ctx, network, addr)
-		return conn, dialErr
+		return d.resolveAndDial(ctx, network, addr)
 	}
 
 	// IPv6 первыми
@@ -108,10 +99,15 @@ func (d *ipv6FirstDialer) DialContext(ctx context.Context, network, addr string)
 		}
 	}
 
+	nextCtx := d.next
+	if nextCtx == nil {
+		nextCtx = proxy.Direct
+	}
+
 	var lastErr error
 	for _, ip := range sorted {
 		target := net.JoinHostPort(ip.String(), port)
-		conn, dialErr := d.next.(proxy.ContextDialer).DialContext(ctx, network, target)
+		conn, dialErr := nextCtx.(proxy.ContextDialer).DialContext(ctx, network, target)
 		if dialErr == nil {
 			return conn, nil
 		}
@@ -120,5 +116,12 @@ func (d *ipv6FirstDialer) DialContext(ctx context.Context, network, addr string)
 	return nil, lastErr
 }
 
-// Убеждаемся, что ipv6FirstDialer реализует proxy.ContextDialer
+func (d *ipv6FirstDialer) resolveAndDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	nextCtx := d.next
+	if nextCtx == nil {
+		nextCtx = proxy.Direct
+	}
+	return nextCtx.(proxy.ContextDialer).DialContext(ctx, network, addr)
+}
+
 var _ proxy.ContextDialer = (*ipv6FirstDialer)(nil)
