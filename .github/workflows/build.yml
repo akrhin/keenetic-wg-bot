@@ -93,8 +93,9 @@ jobs:
       - name: Build release archive
         run: |
           chmod +x wg-bot-mipsle
+          cp wg-bot-mipsle wg-bot
           tar czf wg-bot-mipsle.tar.gz \
-            wg-bot-mipsle \
+            wg-bot \
             install.sh \
             config.toml.example
 

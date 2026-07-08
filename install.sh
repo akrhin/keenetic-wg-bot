@@ -59,7 +59,16 @@ elif command -v wget >/dev/null 2>&1; then
 		rm -rf "$WORKDIR"
 		exit 1
 	}
-	mv "$WORKDIR/wg-bot" "$BIN"
+	# бинарник в архиве называется wg-bot-mipsle
+	if [ -f "$WORKDIR/wg-bot-mipsle" ]; then
+		mv "$WORKDIR/wg-bot-mipsle" "$BIN"
+	elif [ -f "$WORKDIR/wg-bot" ]; then
+		mv "$WORKDIR/wg-bot" "$BIN"
+	else
+		error "Unknown binary name in archive. Files: $(ls "$WORKDIR")"
+		rm -rf "$WORKDIR"
+		exit 1
+	fi
 	chmod 755 "$BIN"
 	rm -rf "$WORKDIR"
 	info "Binary downloaded: $BIN"
