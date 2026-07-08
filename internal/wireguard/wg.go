@@ -91,7 +91,7 @@ func parseDump(iface, dump string) (*Status, error) {
 	}
 
 	// Парсим порт
-	fmt.Sscanf(fields[2], "%d", &s.ListenPort)
+	_, _ = fmt.Sscanf(fields[2], "%d", &s.ListenPort)
 
 	return s, nil
 }

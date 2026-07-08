@@ -53,7 +53,9 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config) *Bot {
 		msg := "⏰ Автоотключение: WireGuard выключен"
 		for _, u := range cfg.Telegram.AllowedUsers {
 			m := tgbotapi.NewMessage(u.ChatID, msg)
-			b.api.Send(m)
+			if _, err := b.api.Send(m); err != nil {
+				log.Printf("[bot] notify auto-off: %v", err)
+			}
 		}
 		log.Println("[bot] auto-off: wireguard stopped by timer")
 	})
@@ -93,7 +95,7 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 	if !b.cfg.Telegram.IsAllowed(update.Message.Chat.ID, update.Message.From.ID) {
 		log.Printf("[bot] access denied: chat=%d user=%d", update.Message.Chat.ID, update.Message.From.ID)
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "⛔ Доступ запрещён")
-		b.api.Send(msg)
+		_, _ = b.api.Send(msg)
 		return
 	}
 
@@ -109,10 +111,15 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 	}
 }
 
+// cb — короткий вызов callback answer (wraps Request).
+func (b *Bot) cb(cq *tgbotapi.CallbackQuery, text string) {
+	_, _ = b.api.Request(tgbotapi.NewCallback(cq.ID, text))
+}
+
 func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 	// Проверка доступа
 	if !b.cfg.Telegram.IsAllowed(cq.Message.Chat.ID, cq.From.ID) {
-		b.api.Request(tgbotapi.NewCallback(cq.ID, "⛔ Доступ запрещён"))
+		b.cb(cq, "⛔ Доступ запрещён")
 		return
 	}
 
@@ -131,7 +138,7 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 	case "wol_server":
 		b.cmdWOL(cq, ctx)
 	default:
-		b.api.Request(tgbotapi.NewCallback(cq.ID, "❓ Неизвестная команда"))
+		b.cb(cq, "❓ Неизвестная команда")
 	}
 }
 

@@ -48,7 +48,7 @@ func Send(macStr, broadcastStr string) error {
 	conn2, _ := net.DialUDP("udp4", nil, addr2)
 	if conn2 != nil {
 		defer conn2.Close()
-		conn2.Write(pkt)
+		_, _ = conn2.Write(pkt)
 	}
 
 	return nil
