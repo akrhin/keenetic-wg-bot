@@ -242,7 +242,7 @@ func (b *Bot) cmdExtend(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 		edit.ParseMode = "Markdown"
 		edit.ReplyMarkup = cq.Message.ReplyMarkup
-		b.api.Send(edit)
+		_, _ = b.api.Send(edit)
 		return
 	}
 
