@@ -66,9 +66,9 @@ download_file() {
 }
 
 verify_gzip() {
-	local file="$1"
-	# Gzip magic: \x1f\x8b. grep с od — работает на BusyBox и GNU.
-	head -c 2 "$file" | od -tx1 | head -1 | grep -q '1f 8b' 2>/dev/null
+	# Проверяем, что файл — настоящий gzip: tar -tzf читает оглавление.
+	# Это работает на любом BusyBox, без заморочек с od.
+	tar -tzf "$1" >/dev/null 2>&1
 }
 
 # ── Функция обновления бинарника ──────────────────────────────
