@@ -1,0 +1,19 @@
+[telegram]
+bot_token = "1234567890:ABCDEFghijklmnopqrstuvwxyz"
+
+[[telegram.allowed_users]]
+chat_id = 123456789
+user_id = 987654321
+
+[wireguard]
+interface = "wg0"
+config_path = "/opt/etc/wireguard/wg0.conf"
+
+[[wol.hosts]]
+name = "asrock-server"
+mac = "AA:BB:CC:DD:EE:FF"
+broadcast = "192.168.1.255"
+
+[scheduler]
+auto_off_minutes = 30
+state_file = "/opt/etc/wg-bot/scheduler.state"

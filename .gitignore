@@ -1,0 +1,31 @@
+# Binaries
+wg-bot
+wg-bot.exe
+wg-bot-*
+cmd/wg-bot/wg-bot
+
+# Build output
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Config (contains secrets)
+config.toml
+config.yaml
+*.toml
+!config.toml.example
+!*.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out
+vendor/
