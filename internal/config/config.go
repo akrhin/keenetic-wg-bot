@@ -53,9 +53,10 @@ type SchedulerConfig struct {
 
 // ProxyConfig — прокси для Telegram API (SOCKS5 с авторизацией или без).
 type ProxyConfig struct {
-	URL      string `toml:"url"`
-	Username string `toml:"username"`
-	Password string `toml:"password"`
+	URL         string `toml:"url"`
+	Username    string `toml:"username"`
+	Password    string `toml:"password"`
+	PreferIPv6  bool   `toml:"prefer_ipv6"`
 }
 
 // Enabled возвращает true, если прокси настроен.

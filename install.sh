@@ -24,6 +24,35 @@ CTL="/opt/bin/wg-bot"
 CONFIG_DIR="/opt/etc/wg-bot"
 INIT_SCRIPT="/opt/etc/init.d/S99wg-bot"
 
+# ── Функция обновления бинарника ──────────────────────────────
+update_binary() {
+	local LATEST_URL="https://github.com/${REPO}/releases/latest/download/wg-bot-mipsle.tar.gz"
+	local WORKDIR
+	WORKDIR=$(mktemp -d)
+
+	wget -qO- "$LATEST_URL" | tar xz -C "$WORKDIR" || {
+		error "Failed to download binary."
+		rm -rf "$WORKDIR"
+		return 1
+	}
+
+	if [ -f "$WORKDIR/wg-bot" ]; then
+		# Останавливаем, только если запущен
+		[ -f "$INIT_SCRIPT" ] && "$INIT_SCRIPT" stop 2>/dev/null || true
+		cp "$WORKDIR/wg-bot" "$BIN"
+		chmod 755 "$BIN"
+		rm -rf "$WORKDIR"
+		info "Binary updated: $BIN"
+		# Запускаем заново
+		[ -f "$INIT_SCRIPT" ] && "$INIT_SCRIPT" start 2>/dev/null || true
+		return 0
+	fi
+
+	error "Unknown binary name in archive. Files: $(ls "$WORKDIR")"
+	rm -rf "$WORKDIR"
+	return 1
+}
+
 # ── Проверка окружения ────────────────────────────────────────
 if [ ! -d /opt/bin ]; then
 	error "Entware not found (/opt/bin missing). Install Entware first."
@@ -45,7 +74,8 @@ done
 
 # ── Скачивание/копирование бинарника ──────────────────────────
 if [ -f "$BIN" ]; then
-	info "Binary already installed: $BIN"
+	info "Updating binary: $BIN"
+	update_binary
 elif [ -f "$(dirname "$0")/wg-bot" ]; then
 	info "Installing binary from local file..."
 	cp "$(dirname "$0")/wg-bot" "$BIN"

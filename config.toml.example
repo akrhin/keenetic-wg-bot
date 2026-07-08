@@ -24,3 +24,4 @@ state_file = "/opt/etc/wg-bot/scheduler.state"
 url = "socks5://192.168.1.1:1080"
 username = "login"
 password = "password"
+# prefer_ipv6 = true   # раскомментируй, если прокси отдаёт IPv6 в приоритете
