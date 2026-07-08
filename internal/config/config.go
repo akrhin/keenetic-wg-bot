@@ -54,6 +54,7 @@ type SchedulerConfig struct {
 func Load(path string) (*Config, error) {
 	var cfg Config
 
+	//nolint:gosec // path comes from -config flag with a default, not user input
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("config read: %w", err)
