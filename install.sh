@@ -67,8 +67,8 @@ download_file() {
 
 verify_gzip() {
 	local file="$1"
-	# Gzip magic: \x1f\x8b. Проверка через cmp — работает на BusyBox и GNU.
-	printf '\037\213' | cmp -s - "$file" 2>/dev/null
+	# Gzip magic: \x1f\x8b. grep с od — работает на BusyBox и GNU.
+	head -c 2 "$file" | od -tx1 | head -1 | grep -q '1f 8b' 2>/dev/null
 }
 
 # ── Функция обновления бинарника ──────────────────────────────
