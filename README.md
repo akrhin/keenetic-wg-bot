@@ -19,8 +19,14 @@ curl -sSL https://raw.githubusercontent.com/akrhin/keenetic-wg-bot/main/install.
 # После установки — отредактировать конфиг
 nano /opt/etc/wg-bot/config.toml
 
-# Запустить
-/opt/etc/init.d/S99wg-bot start
+# Управление
+wg-bot start      # запустить
+wg-bot stop       # остановить
+wg-bot restart    # перезапустить
+wg-bot status     # проверить статус
+wg-bot logs       # смотреть логи
+wg-bot enable     # добавить в автозапуск
+wg-bot disable    # убрать из автозапуска
 ```
 
 ## Конфигурация

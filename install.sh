@@ -19,11 +19,10 @@ warn()  { printf "${YELLOW}[!]${NC} %s\n" "$1"; }
 error() { printf "${RED}[✗]${NC} %s\n" "$1"; }
 
 REPO="akrhin/keenetic-wg-bot"
-BIN="/opt/bin/wg-bot"
+BIN="/opt/sbin/wg-botd"
+CTL="/opt/bin/wg-bot"
 CONFIG_DIR="/opt/etc/wg-bot"
 INIT_SCRIPT="/opt/etc/init.d/S99wg-bot"
-PIDFILE="/opt/var/run/wg-bot.pid"
-CONFIG="${CONFIG_DIR}/config.toml"
 
 # ── Проверка окружения ────────────────────────────────────────
 if [ ! -d /opt/bin ]; then
@@ -48,7 +47,6 @@ done
 if [ -f "$BIN" ]; then
 	info "Binary already installed: $BIN"
 elif [ -f "$(dirname "$0")/wg-bot" ]; then
-	# Установка из локального архива
 	info "Installing binary from local file..."
 	cp "$(dirname "$0")/wg-bot" "$BIN"
 	chmod 755 "$BIN"
@@ -71,6 +69,18 @@ else
 	exit 1
 fi
 
+# ── Скрипт управления ─────────────────────────────────────────
+info "Installing management script..."
+if command -v wget >/dev/null 2>&1; then
+	wget -qO "$CTL" \
+		"https://raw.githubusercontent.com/${REPO}/main/scripts/wg-bot.sh" \
+		&& chmod 755 "$CTL" \
+		&& info "Management script: $CTL" \
+		|| warn "Failed to download management script"
+else
+	warn "Place scripts/wg-bot.sh as $CTL manually"
+fi
+
 # ── Фикс прав на WG-конфиг ────────────────────────────────────
 if [ -f /opt/etc/wireguard/wg0.conf ]; then
 	chmod 600 /opt/etc/wireguard/wg0.conf
@@ -84,20 +94,19 @@ if [ ! -d "$CONFIG_DIR" ]; then
 	info "Created $CONFIG_DIR"
 fi
 
-if [ ! -f "$CONFIG" ]; then
-	# Скачиваем пример конфига из репозитория
+if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
 	if command -v wget >/dev/null 2>&1; then
-		wget -qO "$CONFIG" \
+		wget -qO "${CONFIG_DIR}/config.toml" \
 			"https://raw.githubusercontent.com/${REPO}/main/config.toml.example" \
-			&& chmod 600 "$CONFIG" \
-			&& info "Created $CONFIG from repository example" \
+			&& chmod 600 "${CONFIG_DIR}/config.toml" \
+			&& info "Created ${CONFIG_DIR}/config.toml from repository example" \
 			|| warn "Failed to download example config"
 	else
-		warn "Create ${CONFIG} manually, see:"
+		warn "Create ${CONFIG_DIR}/config.toml manually, see:"
 		warn "  https://github.com/${REPO}/blob/main/config.toml.example"
 	fi
 else
-	info "Config exists: $CONFIG"
+	info "Config exists: ${CONFIG_DIR}/config.toml"
 fi
 
 # ── Init-скрипт ───────────────────────────────────────────────
@@ -105,37 +114,17 @@ if [ ! -f "$INIT_SCRIPT" ]; then
 	cat > "$INIT_SCRIPT" <<'INITEOF'
 #!/bin/sh
 # wg-bot init script for Entware
+# Делегирует всё скрипту управления /opt/bin/wg-bot
 START=99
-PIDFILE=/opt/var/run/wg-bot.pid
-BIN=/opt/bin/wg-bot
-CONFIG=/opt/etc/wg-bot/config.toml
 
-start() {
-	if [ -f "$PIDFILE" ]; then
-		kill -0 "$(cat "$PIDFILE")" 2>/dev/null && return
-	fi
-	echo "Starting wg-bot..."
-	$BIN -config "$CONFIG" &
-	echo $! > "$PIDFILE"
-}
-
-stop() {
-	if [ -f "$PIDFILE" ]; then
-		kill "$(cat "$PIDFILE")" 2>/dev/null && rm -f "$PIDFILE" && echo "Stopped wg-bot"
-	fi
-}
-
-restart() {
-	stop
-	sleep 1
-	start
-}
+CMD="/opt/bin/wg-bot"
 
 case "$1" in
-	start)   start ;;
-	stop)    stop ;;
-	restart) restart ;;
-	*)       echo "Usage: $0 {start|stop|restart}" ;;
+	start)   $CMD start ;;
+	stop)    $CMD stop ;;
+	restart) $CMD restart ;;
+	status)  $CMD status ;;
+	*)       echo "Usage: $0 {start|stop|restart|status}" ;;
 esac
 INITEOF
 	chmod 755 "$INIT_SCRIPT"
@@ -148,15 +137,18 @@ fi
 echo ""
 info "Installation complete!"
 echo ""
-echo "  Next steps:"
-echo "  1. Edit ${CONFIG} with your Telegram token and IDs"
-echo "  2. /opt/etc/init.d/S99wg-bot start"
+echo "  Available commands:"
+echo "    wg-bot status   — проверить статус"
+echo "    wg-bot start    — запустить"
+echo "    wg-bot stop     — остановить"
+echo "    wg-bot restart  — перезапустить"
+echo "    wg-bot logs     — смотреть логи"
+echo "    wg-bot enable   — включить автозапуск"
+echo "    wg-bot disable  — отключить автозапуск"
 echo ""
-
-# Запуск, если не в curl-пайпе
-if [ -t 0 ]; then
-	if [ -f "$BIN" ]; then
-		$BIN -config "$CONFIG" &
-		echo "  Bot started in background. Check logs."
-	fi
-fi
+echo "  Config: ${CONFIG_DIR}/config.toml"
+echo "  Binary: $BIN"
+echo "  Logs:   /opt/var/log/wg-bot.log"
+echo ""
+warn "Edit ${CONFIG_DIR}/config.toml with your Telegram token and IDs, then:"
+echo "    wg-bot start"
