@@ -30,15 +30,20 @@ update_binary() {
 	local WORKDIR
 	WORKDIR=$(mktemp -d)
 
-	wget -qO- "$LATEST_URL" | tar xz -C "$WORKDIR" || {
+	# Гарантированно глушим процесс перед обновлением
+	killall wg-botd 2>/dev/null || true
+	sleep 1
+
+	wget -qO- --timeout=30 "$LATEST_URL" | tar xz -C "$WORKDIR" || {
 		error "Failed to download binary."
 		rm -rf "$WORKDIR"
 		return 1
 	}
 
 	if [ -f "$WORKDIR/wg-bot" ]; then
-		# Останавливаем, только если запущен
-		[ -f "$INIT_SCRIPT" ] && "$INIT_SCRIPT" stop 2>/dev/null || true
+		# Д��ойной kill на случай если init-скрипт не успел
+		killall wg-botd 2>/dev/null || true
+		sleep 1
 		cp "$WORKDIR/wg-bot" "$BIN"
 		chmod 755 "$BIN"
 		rm -rf "$WORKDIR"
