@@ -1,8 +1,8 @@
 # Binaries
-wg-bot
+/wg-bot
 wg-bot.exe
 wg-bot-*
-cmd/wg-bot/wg-bot
+!cmd/**/main.go
 
 # Build output
 dist/
