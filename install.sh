@@ -67,10 +67,8 @@ download_file() {
 
 verify_gzip() {
 	local file="$1"
-	if [ "$(head -c 2 "$file" | od -An -tx1 | tr -d ' ')" != "1f8b" ]; then
-		return 1
-	fi
-	return 0
+	# Gzip magic: \x1f\x8b. Проверка через cmp — работает на BusyBox и GNU.
+	printf '\037\213' | cmp -s - "$file" 2>/dev/null
 }
 
 # ── Функция обновления бинарника ──────────────────────────────
@@ -94,7 +92,7 @@ update_binary() {
 
 	if ! verify_gzip "$TMPTGZ"; then
 		error "Downloaded file is not a gzip archive. Size: $(wc -c < "$TMPTGZ") bytes."
-		error "First bytes: $(head -c 200 "$TMPTGZ" | tr '\0-\177' '.' | head -c 200)"
+		error "File starts with (hex): $(head -c 8 "$TMPTGZ" | od -tx1 2>/dev/null | head -1)"
 		rm -rf "$WORKDIR"
 		return 1
 	fi
@@ -171,7 +169,7 @@ else
 
 	if ! verify_gzip "$TMPTGZ"; then
 		error "Downloaded file is not a gzip archive. Size: $(wc -c < "$TMPTGZ") bytes."
-		error "URL may be blocked or returning error page."
+		error "File starts with (hex): $(head -c 8 "$TMPTGZ" | od -tx1 2>/dev/null | head -1)"
 		rm -rf "$WORKDIR"
 		exit 1
 	fi
