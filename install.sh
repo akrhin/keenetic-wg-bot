@@ -24,10 +24,51 @@ CTL="/opt/bin/wg-bot"
 CONFIG_DIR="/opt/etc/wg-bot"
 INIT_SCRIPT="/opt/etc/init.d/S99wg-bot"
 
+# ── Универсальная загрузка (curl → wget) ──────────────────────
+detect_downloader() {
+	if command -v curl >/dev/null 2>&1; then
+		echo "curl"
+	elif command -v wget >/dev/null 2>&1; then
+		echo "wget"
+	else
+		echo ""
+	fi
+}
+
+# $1 = URL, $2 = output file
+download_file() {
+	local url="$1"
+	local out="$2"
+	local dl
+	dl=$(detect_downloader)
+
+	case "$dl" in
+		curl)
+			curl -sSL --connect-timeout 15 --max-time 60 -o "$out" "$url"
+			;;
+		wget)
+			wget -q --timeout=60 -O "$out" "$url"
+			;;
+		*)
+			error "Neither curl nor wget found."
+			return 1
+			;;
+	esac
+	return $?
+}
+
+verify_gzip() {
+	local file="$1"
+	if [ "$(head -c 2 "$file" | od -An -tx1 | tr -d ' ')" != "1f8b" ]; then
+		return 1
+	fi
+	return 0
+}
+
 # ── Функция обновления бинарника ──────────────────────────────
 update_binary() {
 	local LATEST_URL
-	local LATEST_URL="https://github.com/${REPO}/releases/latest/download/wg-bot-mipsle.tar.gz"
+	LATEST_URL="https://github.com/${REPO}/releases/latest/download/wg-bot-mipsle.tar.gz"
 	local WORKDIR
 	WORKDIR=$(mktemp -d)
 	local TMPTGZ="${WORKDIR}/archive.tar.gz"
@@ -36,14 +77,14 @@ update_binary() {
 	killall wg-botd 2>/dev/null || true
 	sleep 1
 
-	# Скачиваем во временный файл, проверяем magic
-	wget -q --timeout=30 -O "$TMPTGZ" "$LATEST_URL" || {
-		error "Failed to download binary (wget exit code $?)."
+	info "Downloading $LATEST_URL ..."
+	download_file "$LATEST_URL" "$TMPTGZ" || {
+		error "Failed to download binary."
 		rm -rf "$WORKDIR"
 		return 1
 	}
-	# Проверка: gzip-архив начинается с \x1f\x8b
-	if [ "$(head -c 2 "$TMPTGZ" | od -An -tx1 | tr -d ' ')" != "1f8b" ]; then
+
+	if ! verify_gzip "$TMPTGZ"; then
 		error "Downloaded file is not a gzip archive. Size: $(wc -c < "$TMPTGZ") bytes."
 		error "First bytes: $(head -c 200 "$TMPTGZ" | tr '\0-\177' '.' | head -c 200)"
 		rm -rf "$WORKDIR"
@@ -80,6 +121,13 @@ if [ ! -d /opt/bin ]; then
 	exit 1
 fi
 
+DL=$(detect_downloader)
+if [ -z "$DL" ]; then
+	error "Neither curl nor wget available. Install one of them first."
+	exit 1
+fi
+info "Using $DL for downloads"
+
 # ── Установка пакетов ─────────────────────────────────────────
 info "Updating package lists..."
 opkg update 2>/dev/null || warn "opkg update failed, continuing..."
@@ -101,27 +149,31 @@ elif [ -f "$(dirname "$0")/wg-bot" ]; then
 	info "Installing binary from local file..."
 	cp "$(dirname "$0")/wg-bot" "$BIN"
 	chmod 755 "$BIN"
-elif command -v wget >/dev/null 2>&1; then
+else
 	info "Downloading wg-bot binary from GitHub..."
 	LATEST_URL="https://github.com/${REPO}/releases/latest/download/wg-bot-mipsle.tar.gz"
 	WORKDIR=$(mktemp -d)
 	TMPTGZ="${WORKDIR}/archive.tar.gz"
-	wget -q --timeout=30 -O "$TMPTGZ" "$LATEST_URL" || {
+
+	download_file "$LATEST_URL" "$TMPTGZ" || {
 		error "Failed to download binary."
 		rm -rf "$WORKDIR"
 		exit 1
 	}
-	if [ "$(head -c 2 "$TMPTGZ" | od -An -tx1 | tr -d ' ')" != "1f8b" ]; then
+
+	if ! verify_gzip "$TMPTGZ"; then
 		error "Downloaded file is not a gzip archive. Size: $(wc -c < "$TMPTGZ") bytes."
-		error "URL may be blocked or returning error page. Try: wget -q -O /tmp/test.tar.gz \"$LATEST_URL\" && file /tmp/test.tar.gz"
+		error "URL may be blocked or returning error page."
 		rm -rf "$WORKDIR"
 		exit 1
 	fi
+
 	tar xzf "$TMPTGZ" -C "$WORKDIR" || {
 		error "Failed to extract archive."
 		rm -rf "$WORKDIR"
 		exit 1
 	}
+
 	# бинарник в архиве называется wg-bot (v0.2+) либо wg-bot-mipsle (v0.1)
 	if [ -f "$WORKDIR/wg-bot" ]; then
 		mv "$WORKDIR/wg-bot" "$BIN"
@@ -132,26 +184,18 @@ elif command -v wget >/dev/null 2>&1; then
 		rm -rf "$WORKDIR"
 		exit 1
 	fi
+
 	chmod 755 "$BIN"
 	rm -rf "$WORKDIR"
 	info "Binary downloaded: $BIN"
-else
-	error "No wg-bot binary found and wget not available."
-	error "Download from: https://github.com/${REPO}/releases/latest"
-	exit 1
 fi
 
 # ── Скрипт управления ─────────────────────────────────────────
 info "Installing management script..."
-if command -v wget >/dev/null 2>&1; then
-	wget -qO "$CTL" \
-		"https://raw.githubusercontent.com/${REPO}/main/scripts/wg-bot.sh" \
-		&& chmod 755 "$CTL" \
-		&& info "Management script: $CTL" \
-		|| warn "Failed to download management script"
-else
-	warn "Place scripts/wg-bot.sh as $CTL manually"
-fi
+download_file \
+	"https://raw.githubusercontent.com/${REPO}/main/scripts/wg-bot.sh" \
+	"$CTL" && chmod 755 "$CTL" && info "Management script: $CTL" \
+	|| warn "Failed to download management script"
 
 # ── Фикс прав на WG-конфиг ────────────────────────────────────
 if [ -f /opt/etc/wireguard/wg0.conf ]; then
@@ -167,16 +211,12 @@ if [ ! -d "$CONFIG_DIR" ]; then
 fi
 
 if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
-	if command -v wget >/dev/null 2>&1; then
-		wget -qO "${CONFIG_DIR}/config.toml" \
-			"https://raw.githubusercontent.com/${REPO}/main/config.toml.example" \
-			&& chmod 600 "${CONFIG_DIR}/config.toml" \
-			&& info "Created ${CONFIG_DIR}/config.toml from repository example" \
-			|| warn "Failed to download example config"
-	else
-		warn "Create ${CONFIG_DIR}/config.toml manually, see:"
-		warn "  https://github.com/${REPO}/blob/main/config.toml.example"
-	fi
+	download_file \
+		"https://raw.githubusercontent.com/${REPO}/main/config.toml.example" \
+		"${CONFIG_DIR}/config.toml" \
+		&& chmod 600 "${CONFIG_DIR}/config.toml" \
+		&& info "Created ${CONFIG_DIR}/config.toml from repository example" \
+		|| warn "Failed to download example config"
 else
 	info "Config exists: ${CONFIG_DIR}/config.toml"
 fi
