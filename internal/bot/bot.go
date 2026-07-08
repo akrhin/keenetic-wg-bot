@@ -117,6 +117,8 @@ func (b *Bot) cb(cq *tgbotapi.CallbackQuery, text string) {
 }
 
 func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
+	log.Printf("[bot] callback: data=%s from=%d chat=%d", cq.Data, cq.From.ID, cq.Message.Chat.ID)
+
 	// Проверка доступа
 	if !b.cfg.Telegram.IsAllowed(cq.Message.Chat.ID, cq.From.ID) {
 		b.cb(cq, "⛔ Доступ запрещён")
@@ -192,6 +194,7 @@ func (b *Bot) cmdOn(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	d := time.Duration(b.cfg.Scheduler.AutoOffMinutes) * time.Minute
 	b.sched.Start(d)
 
+	log.Printf("[bot] wg on: interface=%s timeout=%dm", b.cfg.WireGuard.Interface, b.cfg.Scheduler.AutoOffMinutes)
 	b.cb(cq, "✅ WG включён")
 
 	// Обновляем сообщение со статусом
@@ -212,6 +215,7 @@ func (b *Bot) cmdOff(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 		return
 	}
 
+	log.Printf("[bot] wg off: interface=%s", b.cfg.WireGuard.Interface)
 	b.cb(cq, "✅ WG выключен")
 
 	status, err := b.wg.Show(ctx)
@@ -249,6 +253,8 @@ func (b *Bot) cmdExtend(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	d := time.Duration(b.cfg.Scheduler.AutoOffMinutes) * time.Minute
 	b.sched.Start(d)
 
+	s := b.sched.Remaining()
+	log.Printf("[bot] extend: remaining=%v", s)
 	b.cb(cq, fmt.Sprintf("⏱ Продлён на %d мин", b.cfg.Scheduler.AutoOffMinutes))
 
 	status, err := b.wg.Show(ctx)
@@ -272,6 +278,7 @@ func (b *Bot) cmdWOL(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 		return
 	}
 
+	log.Printf("[bot] wol sent: name=%s mac=%s broadcast=%s", host.Name, host.MAC, host.Broadcast)
 	b.cb(cq, fmt.Sprintf("⚡ WoL отправлен на %s", host.Name))
 }
 

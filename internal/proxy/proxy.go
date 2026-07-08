@@ -22,12 +22,12 @@ func NewHTTPClient(cfg *config.Config) (*http.Client, error) {
 			return &http.Client{
 				Transport: &http.Transport{
 					DialContext:           (&ipv6FirstDialer{}).DialContext,
-					ResponseHeaderTimeout: 30 * time.Second,
+					ResponseHeaderTimeout: 75 * time.Second,
 				},
-				Timeout: 30 * time.Second,
+				Timeout: 90 * time.Second,
 			}, nil
 		}
-		return &http.Client{Timeout: 30 * time.Second}, nil
+		return &http.Client{Timeout: 90 * time.Second}, nil
 	}
 
 	// Прокси настроен и включён
@@ -60,9 +60,9 @@ func NewHTTPClient(cfg *config.Config) (*http.Client, error) {
 	return &http.Client{
 		Transport: &http.Transport{
 			DialContext:           ctxDialer.DialContext,
-			ResponseHeaderTimeout: 30 * time.Second,
+			ResponseHeaderTimeout: 75 * time.Second,
 		},
-		Timeout: 60 * time.Second,
+		Timeout: 90 * time.Second,
 	}, nil
 }
 
