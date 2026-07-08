@@ -26,22 +26,38 @@ INIT_SCRIPT="/opt/etc/init.d/S99wg-bot"
 
 # ── Функция обновления бинарника ──────────────────────────────
 update_binary() {
+	local LATEST_URL
 	local LATEST_URL="https://github.com/${REPO}/releases/latest/download/wg-bot-mipsle.tar.gz"
 	local WORKDIR
 	WORKDIR=$(mktemp -d)
+	local TMPTGZ="${WORKDIR}/archive.tar.gz"
 
 	# Гарантированно глушим процесс перед обновлением
 	killall wg-botd 2>/dev/null || true
 	sleep 1
 
-	wget -qO- --timeout=30 "$LATEST_URL" | tar xz -C "$WORKDIR" || {
-		error "Failed to download binary."
+	# Скачиваем во временный файл, проверяем magic
+	wget -q --timeout=30 -O "$TMPTGZ" "$LATEST_URL" || {
+		error "Failed to download binary (wget exit code $?)."
+		rm -rf "$WORKDIR"
+		return 1
+	}
+	# Проверка: gzip-архив начинается с \x1f\x8b
+	if [ "$(head -c 2 "$TMPTGZ" | od -An -tx1 | tr -d ' ')" != "1f8b" ]; then
+		error "Downloaded file is not a gzip archive. Size: $(wc -c < "$TMPTGZ") bytes."
+		error "First bytes: $(head -c 200 "$TMPTGZ" | tr '\0-\177' '.' | head -c 200)"
+		rm -rf "$WORKDIR"
+		return 1
+	fi
+
+	tar xzf "$TMPTGZ" -C "$WORKDIR" || {
+		error "Failed to extract archive."
 		rm -rf "$WORKDIR"
 		return 1
 	}
 
 	if [ -f "$WORKDIR/wg-bot" ]; then
-		# Д��ойной kill на случай если init-скрипт не успел
+		# Двойной kill на случай если init-скрипт не успел
 		killall wg-botd 2>/dev/null || true
 		sleep 1
 		cp "$WORKDIR/wg-bot" "$BIN"
@@ -49,7 +65,7 @@ update_binary() {
 		rm -rf "$WORKDIR"
 		info "Binary updated: $BIN"
 		# Запускаем заново
-		[ -f "$INIT_SCRIPT" ] && "$INIT_SCRIPT" start 2>/dev/null || true
+		"$CTL" start 2>/dev/null || "$INIT_SCRIPT" start 2>/dev/null || true
 		return 0
 	fi
 
@@ -89,16 +105,28 @@ elif command -v wget >/dev/null 2>&1; then
 	info "Downloading wg-bot binary from GitHub..."
 	LATEST_URL="https://github.com/${REPO}/releases/latest/download/wg-bot-mipsle.tar.gz"
 	WORKDIR=$(mktemp -d)
-	wget -qO- "$LATEST_URL" | tar xz -C "$WORKDIR" || {
-		error "Failed to download binary. Check connection or install manually."
+	TMPTGZ="${WORKDIR}/archive.tar.gz"
+	wget -q --timeout=30 -O "$TMPTGZ" "$LATEST_URL" || {
+		error "Failed to download binary."
 		rm -rf "$WORKDIR"
 		exit 1
 	}
-	# бинарник в архиве называется wg-bot-mipsle
-	if [ -f "$WORKDIR/wg-bot-mipsle" ]; then
-		mv "$WORKDIR/wg-bot-mipsle" "$BIN"
-	elif [ -f "$WORKDIR/wg-bot" ]; then
+	if [ "$(head -c 2 "$TMPTGZ" | od -An -tx1 | tr -d ' ')" != "1f8b" ]; then
+		error "Downloaded file is not a gzip archive. Size: $(wc -c < "$TMPTGZ") bytes."
+		error "URL may be blocked or returning error page. Try: wget -q -O /tmp/test.tar.gz \"$LATEST_URL\" && file /tmp/test.tar.gz"
+		rm -rf "$WORKDIR"
+		exit 1
+	fi
+	tar xzf "$TMPTGZ" -C "$WORKDIR" || {
+		error "Failed to extract archive."
+		rm -rf "$WORKDIR"
+		exit 1
+	}
+	# бинарник в архиве называется wg-bot (v0.2+) либо wg-bot-mipsle (v0.1)
+	if [ -f "$WORKDIR/wg-bot" ]; then
 		mv "$WORKDIR/wg-bot" "$BIN"
+	elif [ -f "$WORKDIR/wg-bot-mipsle" ]; then
+		mv "$WORKDIR/wg-bot-mipsle" "$BIN"
 	else
 		error "Unknown binary name in archive. Files: $(ls "$WORKDIR")"
 		rm -rf "$WORKDIR"
