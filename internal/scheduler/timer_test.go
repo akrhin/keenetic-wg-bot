@@ -15,7 +15,7 @@ func TestTimer_StartStop(t *testing.T) {
 		t.Error("expected inactive after creation")
 	}
 
-	timer.Start(100 * time.Millisecond)
+	timer.Start(50 * time.Millisecond)
 	if !timer.IsActive() {
 		t.Error("expected active after start")
 	}
@@ -33,9 +33,9 @@ func TestTimer_StartStop(t *testing.T) {
 }
 
 func TestTimer_Cancel(t *testing.T) {
-	triggered := make(chan struct{}, 1)
+	triggered := false
 	timer := New(func() {
-		close(triggered)
+		triggered = true
 	})
 
 	timer.Start(1 * time.Hour) // очень долго
@@ -45,27 +45,38 @@ func TestTimer_Cancel(t *testing.T) {
 		t.Error("expected inactive after stop")
 	}
 
-	// Проверяем, что не сработал
-	select {
-	case <-triggered:
+	// Ждём немного, чтобы убедиться, что таймер не сработал
+	time.Sleep(50 * time.Millisecond)
+	if triggered {
 		t.Fatal("timer triggered despite stop")
-	case <-time.After(50 * time.Millisecond):
-		// ok
 	}
 }
 
 func TestTimer_Restart(t *testing.T) {
-	count := 0
+	triggered := make(chan struct{}, 2)
 	timer := New(func() {
-		count++
+		triggered <- struct{}{}
 	})
 
+	// Запускаем с очень долгим таймером
 	timer.Start(1 * time.Hour)
-	timer.Start(50 * time.Millisecond) // перезапускаем раньше
 
-	time.Sleep(100 * time.Millisecond)
+	// Тут же перезапускаем на короткий
+	timer.Start(50 * time.Millisecond)
 
-	if count != 1 {
-		t.Errorf("expected 1 trigger, got %d", count)
+	// Должен сработать ровно 1 раз (второй таймер)
+	select {
+	case <-triggered:
+		// ok
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("restarted timer did not trigger")
+	}
+
+	// Проверяем, что не было второго срабатывания
+	select {
+	case <-triggered:
+		t.Fatal("timer triggered more than once")
+	case <-time.After(50 * time.Millisecond):
+		// ok — ровно один
 	}
 }

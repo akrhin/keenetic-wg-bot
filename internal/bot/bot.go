@@ -178,12 +178,12 @@ func (b *Bot) sendStatus(chatID int64) {
 	msg.ParseMode = "Markdown"
 	msg.DisableWebPagePreview = true
 
-	b.api.Send(msg)
+	_, _ = b.api.Send(msg)
 }
 
 func (b *Bot) cmdOn(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	if err := b.wg.Up(ctx); err != nil {
-		b.api.Request(tgbotapi.NewCallback(cq.ID, "❌ Ошибка включения"))
+		b.cb(cq, "❌ Ошибка включения")
 		log.Printf("[bot] wg up: %v", err)
 		return
 	}
@@ -192,7 +192,7 @@ func (b *Bot) cmdOn(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	d := time.Duration(b.cfg.Scheduler.AutoOffMinutes) * time.Minute
 	b.sched.Start(d)
 
-	b.api.Request(tgbotapi.NewCallback(cq.ID, "✅ WG включён"))
+	b.cb(cq, "✅ WG включён")
 
 	// Обновляем сообщение со статусом
 	status, err := b.wg.Show(ctx)
@@ -200,42 +200,42 @@ func (b *Bot) cmdOn(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = cq.Message.ReplyMarkup
-	b.api.Send(edit)
+	_, _ = b.api.Send(edit)
 }
 
 func (b *Bot) cmdOff(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	b.sched.Stop()
 
 	if err := b.wg.Down(ctx); err != nil {
-		b.api.Request(tgbotapi.NewCallback(cq.ID, "❌ Ошибка выключения"))
+		b.cb(cq, "❌ Ошибка выключения")
 		log.Printf("[bot] wg down: %v", err)
 		return
 	}
 
-	b.api.Request(tgbotapi.NewCallback(cq.ID, "✅ WG выключен"))
+	b.cb(cq, "✅ WG выключен")
 
 	status, err := b.wg.Show(ctx)
 	text := "❌ **WireGuard выключен**\n\n" + formatStatus(status, err, b.sched)
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = cq.Message.ReplyMarkup
-	b.api.Send(edit)
+	_, _ = b.api.Send(edit)
 }
 
 func (b *Bot) cmdStatus(cq *tgbotapi.CallbackQuery, ctx context.Context) {
-	b.api.Request(tgbotapi.NewCallback(cq.ID, ""))
+	b.cb(cq, "")
 
 	status, err := b.wg.Show(ctx)
 	text := formatStatus(status, err, b.sched)
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = cq.Message.ReplyMarkup
-	b.api.Send(edit)
+	_, _ = b.api.Send(edit)
 }
 
 func (b *Bot) cmdExtend(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	if !b.sched.IsActive() {
-		b.api.Request(tgbotapi.NewCallback(cq.ID, "❌ Таймер не активен"))
+		b.cb(cq, "❌ Таймер не активен")
 
 		status, err := b.wg.Show(ctx)
 		text := formatStatus(status, err, b.sched)
@@ -249,30 +249,30 @@ func (b *Bot) cmdExtend(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	d := time.Duration(b.cfg.Scheduler.AutoOffMinutes) * time.Minute
 	b.sched.Start(d)
 
-	b.api.Request(tgbotapi.NewCallback(cq.ID, fmt.Sprintf("⏱ Продлён на %d мин", b.cfg.Scheduler.AutoOffMinutes)))
+	b.cb(cq, fmt.Sprintf("⏱ Продлён на %d мин", b.cfg.Scheduler.AutoOffMinutes))
 
 	status, err := b.wg.Show(ctx)
 	text := formatStatus(status, err, b.sched)
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = cq.Message.ReplyMarkup
-	b.api.Send(edit)
+	_, _ = b.api.Send(edit)
 }
 
 func (b *Bot) cmdWOL(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	if len(b.cfg.WOL.Hosts) == 0 {
-		b.api.Request(tgbotapi.NewCallback(cq.ID, "❌ Нет хостов для WoL"))
+		b.cb(cq, "❌ Нет хостов для WoL")
 		return
 	}
 
 	host := b.cfg.WOL.Hosts[0]
 	if err := wol.Send(host.MAC, host.Broadcast); err != nil {
-		b.api.Request(tgbotapi.NewCallback(cq.ID, "❌ Ошибка WoL"))
+		b.cb(cq, "❌ Ошибка WoL")
 		log.Printf("[bot] wol: %v", err)
 		return
 	}
 
-	b.api.Request(tgbotapi.NewCallback(cq.ID, fmt.Sprintf("⚡ WoL отправлен на %s", host.Name)))
+	b.cb(cq, fmt.Sprintf("⚡ WoL отправлен на %s", host.Name))
 }
 
 // formatStatus форматирует статус WG для сообщения.
