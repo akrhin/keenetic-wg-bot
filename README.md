@@ -13,19 +13,13 @@ Telegram-бот для управления WireGuard и Wake-on-LAN на Keenet
 ## Установка
 
 ```bash
-# 1. Скачать бинарник с релиза
-curl -L -O https://github.com/akrhin/keenetic-wg-bot/releases/latest/download/wg-bot-mipsle.tar.gz
-tar xzf wg-bot-mipsle.tar.gz
-cd wg-bot-mipsle
+# Прямая установка на Keenetic (из SSH)
+curl -sSL https://raw.githubusercontent.com/akrhin/keenetic-wg-bot/main/install.sh | bash
 
-# 2. Запустить установщик
-chmod +x install.sh
-./install.sh
-
-# 3. Отредактировать конфиг
+# После установки — отредактировать конфиг
 nano /opt/etc/wg-bot/config.toml
 
-# 4. Запустить
+# Запустить
 /opt/etc/init.d/S99wg-bot start
 ```
 
