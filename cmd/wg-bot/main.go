@@ -16,6 +16,7 @@ import (
 
 	"github.com/akrhin/keenetic-wg-bot/internal/bot"
 	"github.com/akrhin/keenetic-wg-bot/internal/config"
+	"github.com/akrhin/keenetic-wg-bot/internal/proxy"
 )
 
 var configPath = flag.String("config", "/opt/etc/wg-bot/config.toml", "path to config file")
@@ -32,8 +33,12 @@ func main() {
 		log.Fatalf("[wg-bot] config: %v", err)
 	}
 
-	// Инициализация Telegram API
-	api, err := tgbotapi.NewBotAPI(cfg.Telegram.BotToken)
+	// Инициализация Telegram API (через прокси, если настроен)
+	httpClient, err := proxy.NewHTTPClient(&cfg.Proxy)
+	if err != nil {
+		log.Fatalf("[wg-bot] proxy: %v", err)
+	}
+	api, err := tgbotapi.NewBotAPIWithClient(cfg.Telegram.BotToken, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		log.Fatalf("[wg-bot] telegram api: %v", err)
 	}

@@ -17,6 +17,7 @@ type Config struct {
 	WireGuard WireGuardConfig `toml:"wireguard"`
 	WOL       WOLConfig       `toml:"wol"`
 	Scheduler SchedulerConfig `toml:"scheduler"`
+	Proxy     ProxyConfig     `toml:"proxy"`
 }
 
 type TelegramConfig struct {
@@ -48,6 +49,18 @@ type WOLHost struct {
 type SchedulerConfig struct {
 	AutoOffMinutes int    `toml:"auto_off_minutes"`
 	StateFile      string `toml:"state_file"`
+}
+
+// ProxyConfig — прокси для Telegram API (SOCKS5 с авторизацией или без).
+type ProxyConfig struct {
+	URL      string `toml:"url"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+}
+
+// Enabled возвращает true, если прокси настроен.
+func (p *ProxyConfig) Enabled() bool {
+	return p.URL != ""
 }
 
 // Load читает и валидирует конфиг.

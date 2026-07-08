@@ -17,3 +17,10 @@ broadcast = "192.168.1.255"
 [scheduler]
 auto_off_minutes = 30
 state_file = "/opt/etc/wg-bot/scheduler.state"
+
+[proxy]
+# Прокси для Telegram API (SOCKS5 с логином/паролем или без).
+# Закомментируй или удали секцию, если прокси не нужен.
+url = "socks5://192.168.1.1:1080"
+username = "login"
+password = "password"
