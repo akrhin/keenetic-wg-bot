@@ -1,0 +1,29 @@
+---
+description: Brief JSON steplog at the end of every assistant turn (.cursor/backlog)
+alwaysApply: true
+---
+
+# Each-step log
+
+At the **end of every assistant turn**, without exception:
+
+1. **Compose** (keep it short — a few sentences total):
+   - `summary`: what happened *in this turn* (action taken, decision, blocker, next step).
+   - `current_status`: one-line snapshot of where the work stands now.
+
+2. **Persist** — from the repository root:
+   ```bash
+   mkdir -p .cursor/backlog
+   ```
+
+3. **Write** the JSON file:
+   ```json: .cursor/backlog/steplog-${{date:YYYYMMDD-HHmmss}}.json
+   {
+     "summary": "<this turn>",
+     "current_status": "<snapshot>"
+   }
+   ```
+
+4. **Silence** — no confirmation prompt, no separate announcement in chat.
+
+This is the lightweight per-step trail. For a recap of a **finished epic or module**, see `significant-changes-summary.mdc`.

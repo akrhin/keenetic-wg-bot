@@ -1,0 +1,42 @@
+---
+description: >
+  JSON recap in .cursor/backlog when a substantial chunk of work finishes — epic,
+  module, deploy/config change, or debugging with a conclusion. Skip trivial turns.
+alwaysApply: true
+---
+
+# Significant-changes summary
+
+After **meaningful, finished work** — not after every turn — write a richer backlog entry.
+
+**Write when**, for example:
+
+- A large epic or module reached a natural stopping point (feature shipped, refactor done, migration applied);
+- Configuration, deploy scripts, Cursor rules, or `.env` templates changed;
+- Multi-step debugging concluded (what broke, root cause, fix, what to verify);
+- The user asked to record a decision or context for future sessions.
+
+**Skip** for short Q&A, clarifications, rephrasing without new facts, or a one-off micro-edit with no lasting effect.
+
+When you **do** write:
+
+1. **Compose** (one short paragraph each):
+   - `summary`: what was accomplished in this chunk — key steps, blockers resolved, follow-ups.
+   - `current_status`: project / service state after this chunk.
+
+2. **Persist** — from the repository root:
+   ```bash
+   mkdir -p .cursor/backlog
+   ```
+
+3. **Write** the JSON file:
+   ```json: .cursor/backlog/summary-${{date:YYYYMMDD-HHmmss}}.json
+   {
+     "summary": "<chunk recap>",
+     "current_status": "<state after chunk>"
+   }
+   ```
+
+4. **Silence** — no confirmation prompt, no separate announcement in chat.
+
+Per-turn steplogs still go to `steplog-*.json` via `each-step-log.mdc`.
