@@ -5,6 +5,57 @@ import (
 	"time"
 )
 
+func TestTimer_Remaining(t *testing.T) {
+	triggered := make(chan struct{}, 1)
+	timer := New(func() {
+		triggered <- struct{}{}
+	})
+
+	// Неактивный — 0
+	if r := timer.Remaining(); r != 0 {
+		t.Errorf("inactive: Remaining() = %v, want 0", r)
+	}
+
+	// Запускаем на 200ms
+	timer.Start(200 * time.Millisecond)
+
+	// Почти сразу — ~200ms
+	r := timer.Remaining()
+	if r < 150*time.Millisecond || r > 250*time.Millisecond {
+		t.Errorf("after start: Remaining() = %v, want ~200ms", r)
+	}
+
+	// Ждём 50ms
+	time.Sleep(60 * time.Millisecond)
+
+	// Должно быть ~140ms
+	r = timer.Remaining()
+	if r < 80*time.Millisecond || r > 200*time.Millisecond {
+		t.Errorf("after 60ms sleep: Remaining() = %v, want ~140ms", r)
+	}
+
+	// Ждём срабатывания
+	select {
+	case <-triggered:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timer did not trigger")
+	}
+
+	// После срабатывания — 0
+	if r := timer.Remaining(); r != 0 {
+		t.Errorf("after fire: Remaining() = %v, want 0", r)
+	}
+}
+
+func TestTimer_Remaining_AfterStop(t *testing.T) {
+	timer := New(func() {})
+	timer.Start(1 * time.Hour)
+	timer.Stop()
+	if r := timer.Remaining(); r != 0 {
+		t.Errorf("after stop: Remaining() = %v, want 0", r)
+	}
+}
+
 func TestTimer_StartStop(t *testing.T) {
 	triggered := make(chan struct{}, 1)
 	timer := New(func() {

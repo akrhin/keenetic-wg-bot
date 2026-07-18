@@ -21,11 +21,10 @@ import (
 
 // Bot — основной объект бота.
 type Bot struct {
-	api       *tgbotapi.BotAPI
-	cfg       *config.Config
-	wg        *wireguard.Manager
-	sched     *scheduler.Timer
-	botUserID int64 // для фильтрации апдейтов
+	api   *tgbotapi.BotAPI
+	cfg   *config.Config
+	wg    *wireguard.Manager
+	sched *scheduler.Timer
 }
 
 // New создаёт нового бота.
@@ -33,10 +32,9 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config) *Bot {
 	wgMgr := wireguard.New(cfg.WireGuard.Interface)
 
 	b := &Bot{
-		api:       api,
-		cfg:       cfg,
-		wg:        wgMgr,
-		botUserID: api.Self.ID,
+		api: api,
+		cfg: cfg,
+		wg:  wgMgr,
 	}
 
 	// Таймер автоотключения

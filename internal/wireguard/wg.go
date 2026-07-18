@@ -6,6 +6,7 @@ package wireguard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -63,9 +64,14 @@ func (m *Manager) Show(ctx context.Context) (*Status, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		// Если интерфейс не существует — это не ошибка, просто не запущен.
-		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-			// wg show пишет ошибку в stderr — это нормально, когда интерфейса нет.
-			return &Status{Running: false, Interface: m.iface}, nil
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			stderr := string(exitErr.Stderr)
+			// BusyBox wg: "Cannot find device wg0"
+			// wg-tools: "wg: Device does not exist: wg0"
+			if strings.Contains(stderr, "Cannot find") || strings.Contains(stderr, "does not exist") {
+				return &Status{Running: false, Interface: m.iface}, nil
+			}
 		}
 		return nil, fmt.Errorf("wg show %s: %w", m.iface, err)
 	}

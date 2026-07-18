@@ -20,11 +20,12 @@ type Action func()
 
 // Timer управляет таймером автоотключения.
 type Timer struct {
-	mu      sync.Mutex
-	timer   *time.Timer
+	mu        sync.Mutex
+	timer     *time.Timer
 	remaining time.Duration
-	active  bool
-	action  Action
+	endAt     time.Time
+	active    bool
+	action    Action
 }
 
 // New создаёт новый scheduler.Timer.
@@ -41,16 +42,18 @@ func (t *Timer) Start(d time.Duration) {
 	t.StopLocked()
 
 	t.remaining = d
+	t.endAt = time.Now().Add(d)
 	t.active = true
 	t.timer = time.AfterFunc(d, func() {
 		t.mu.Lock()
 		t.active = false
+		t.endAt = time.Time{}
 		t.mu.Unlock()
 		if t.action != nil {
 			t.action()
 		}
 	})
-	log.Printf("[scheduler] auto-off timer started: %v", d)
+	log.Printf("[scheduler] auto-off timer started: %v (until %v)", d, t.endAt.Format(time.RFC3339))
 }
 
 // Stop отменяет таймер.
@@ -67,6 +70,7 @@ func (t *Timer) StopLocked() {
 		t.timer = nil
 	}
 	t.active = false
+	t.endAt = time.Time{}
 	log.Printf("[scheduler] auto-off timer stopped")
 }
 
@@ -81,10 +85,14 @@ func (t *Timer) IsActive() bool {
 func (t *Timer) Remaining() time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.active || t.timer == nil {
+	if !t.active || t.endAt.IsZero() {
 		return 0
 	}
-	return t.remaining
+	d := time.Until(t.endAt)
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 // String — человекочитаемое представление.

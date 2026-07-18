@@ -1,18 +1,22 @@
-.PHONY: all build test clean lint release
+.PHONY: all build test clean lint security release
 
 APP := wg-bot
 
-all: fmt lint test build
+all: fmt lint security test build
 
 build:
 	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o $(APP)-amd64 ./cmd/$(APP)/
 	GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -ldflags="-s -w" -o $(APP)-mipsle ./cmd/$(APP)/
 
 test:
-	go test -v -count=1 ./...
+	go test -v -count=1 -race ./...
 
 lint:
 	golangci-lint run ./... 2>/dev/null || go vet ./...
+
+security:
+	gosec -quiet ./...
+	gitleaks detect --no-git --verbose
 
 fmt:
 	go fmt ./...

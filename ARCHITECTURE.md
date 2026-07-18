@@ -1,191 +1,239 @@
 # Keenetic WireGuard Bot — Архитектура
 
-## Проблема
+## Overview
 
-На Keenetic с Entware настроен WireGuard-клиент (`wireguard-go`). Нужен Telegram-бот для:
-- Вкл/выкл WG-туннеля
-- Автоотключение через 30 мин после включения
-- Отправка Wake-on-LAN на хост(ы)
+`keenetic-wg-bot` — Telegram-бот на Go для роутеров Keenetic с Entware. Управляет WireGuard-клиентом (вкл/выкл через `wg-quick`), отправляет Wake-on-LAN на хосты в локальной сети и автоматически отключает VPN по таймеру.
 
-## Окружение
+Интерфейс — inline-клавиатура в Telegram, без текстовых команд. Бот проверяет доступ по белому списку `chat_id + user_id`.
 
-- Платформа: Keenetic (MIPS/ARM, Entware, BusyBox ash)
-- WG клиент: `wireguard-go` пакет, управляется через `wg-quick up/down wg0`
-- Python: будет установлен через `opkg` + venv
-- Процессы: нет systemd — Entware использует `/opt/etc/init.d/`
+## Технологический стек
 
-## Структура репозитория
+| Компонент | Технология | Обоснование |
+|-----------|------------|-------------|
+| Язык | Go 1.23+ | Один бинарник, кросс-компиляция, ноль зависимостей на роутере |
+| Telegram API | `go-telegram-bot-api/v5` | Pure Go, стандарт де-факто |
+| Конфиг | TOML (`BurntSushi/toml`) | Человекочитаемый, с комментариями, строгая типизация |
+| Прокси | `golang.org/x/net/proxy` | SOCKS5 из стандартного extended-пакета |
+| Сборка | Make + GitHub Actions | Кросс-компиляция, линтинг, gosec, gitleaks, релизы |
+
+## Структура проекта
 
 ```
 keenetic-wg-bot/
-├── README.md                    # Документация
-├── ARCHITECTURE.md              # Этот файл
-├── install.sh                   # Установщик (идемпотентный)
-├── config.yaml.example          # Пример конфига (без секретов)
-├── .gitignore
-├── src/
-│   ├── __init__.py
-│   ├── main.py                  # Точка входа
-│   ├── bot.py                   # Telegram-хендлеры
-│   ├── wireguard.py             # Управление WG
-│   ├── wol.py                   # Wake-on-LAN
-│   ├── scheduler.py             # Планировщик автоотключения
-│   └── config.py                # Загрузка конфига
-└── scripts/
-    └── wg-cron.sh               # cron-скрипт автоотключения (опционально)
+├── cmd/wg-bot/main.go              # Entry point + graceful shutdown
+├── internal/
+│   ├── bot/bot.go                  # Telegram-хендлеры + inline-клавиатура
+│   ├── config/config.go            # Загрузка TOML + валидация + белый список
+│   ├── wireguard/wg.go             # exec.Command wg-quick, парсинг wg show dump
+│   ├── wol/wol.go                  # Magic packet через UDP
+│   ├── scheduler/timer.go          # time.AfterFunc + мьютекс + Remaining()
+│   └── proxy/proxy.go              # SOCKS5 + IPv6-first dialer
+├── install.sh                      # Идемпотентный установщик на Entware
+├── config.toml.example             # Пример конфига (без секретов)
+├── Makefile                        # fmt → lint → security → test → build → release
+├── AGENTS.md                       # Контекст для LLM
+├── ARCHITECTURE.md                 # Этот файл
+├── README.md
+└── .github/workflows/build.yml     # CI: lint+gosec+gitleaks → test → build → release
 ```
+
+Каждый пакет имеет тесты (`_test.go`).
 
 ## Компоненты
 
-### 1. Config (`config.py`)
+### 1. Config (`internal/config`)
 
-Конфиг в YAML: `/opt/etc/wg-bot/config.yaml` (chmod 600)
+Загрузка и валидация TOML-конфига (`/opt/etc/wg-bot/config.toml`).
 
-```yaml
-telegram:
-  bot_token: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-  allowed_users:
-    - chat_id: 123456789
-      user_id: 987654321
+**Секции конфига:**
+- `telegram` — bot_token, белый список `{chat_id, user_id}`
+- `wireguard` — имя интерфейса (по умолчанию `wg0`), путь к `.conf`
+- `wol` — список хостов `{name, mac, broadcast}`
+- `scheduler` — `auto_off_minutes` (по умолчанию 30), `state_file`
+- `proxy` — опциональный SOCKS5: `enabled, url, username, password`
+- `network` — `prefer_ipv6` (IPv6-first resolution)
 
-wireguard:
-  interface: "wg0"
-  config_path: "/opt/etc/wireguard/wg0.conf"
+**Валидация:**
+- `bot_token` обязателен
+- `allowed_users` не может быть пустым
+- Для каждого WoL-хоста обязательны `name` и `mac`
+- `interface`, `config_path`, `auto_off_minutes` имеют значения по умолчанию
 
-wol:
-  hosts:
-    - name: "asrock-server"
-      mac: "AA:BB:CC:DD:EE:FF"
-      broadcast: "192.168.1.255"
+**Access control:** метод `IsAllowed(chatID, userID int64) bool` проверяет пару `chat_id + user_id` по белому списку.
 
-scheduler:
-  auto_off_minutes: 30
-  state_file: "/opt/etc/wg-bot/scheduler.state"
-```
+### 2. WireGuard Manager (`internal/wireguard`)
 
-### 2. WireGuard control (`wireguard.py`)
+Управление WG-интерфейсом через `exec.Command` **без shell** (`shell=false`).
 
-Управление через subprocess:
+| Действие | Вызов | Примечание |
+|----------|-------|------------|
+| Включить | `wg-quick up <iface>` | `exec.CommandContext(ctx, ...)` |
+| Выключить | `wg-quick down <iface>` | `exec.CommandContext(ctx, ...)` |
+| Статус | `wg show <iface> dump` | Парсинг tab-разделённого вывода |
 
-| Действие | Команда |
-|----------|---------|
-| Включить | `wg-quick up wg0` |
-| Выключить | `wg-quick down wg0` |
-| Статус | `wg show wg0` |
-| peer alive | Парсинг `wg show wg0` (latest handshake) |
+**Парсинг `wg show dump`:**
+- Первая строка — информация об интерфейсе (listen_port)
+- Остальные строки — пиры (считаем `PeerCount`)
+- Если интерфейс не существует — возвращается `{Running: false}`, а не ошибка
+- Устойчив к BusyBox `wg` (Keenetic) и `wg-tools` (стандартный)
 
-Предварительно чиним `chmod 600 /opt/etc/wireguard/wg0.conf`.
+### 3. Scheduler Timer (`internal/scheduler`)
 
-### 3. WoL (`wol.py`)
+Внутрипроцессный таймер автоотключения на базе `time.AfterFunc`.
 
-`wakeonlan` из pip → `wakeonlan <MAC> -i <broadcast>`.
-Либо raw socket: ethernet-фрейм с magic packet.
+**Состояние:**
+- `mu sync.Mutex` — защита от гонок
+- `timer *time.Timer` — системный таймер
+- `endAt time.Time` — время срабатывания (для живого `Remaining()`)
+- `active bool` — флаг активности
 
-Храним: имя + MAC + broadcast IP в конфиге.
+**Методы:**
+- `Start(d)` — запустить/перезапустить на `d` (старый таймер отменяется)
+- `Stop()` — отменить таймер
+- `IsActive() bool` — запущен ли
+- `Remaining() time.Duration` — живой обратный отсчёт от `endAt`
 
-### 4. Scheduler (`scheduler.py`)
+**Колбэк** — action-функция, переданная в `New()`. Вызывает `wg.Down()` + уведомляет всех пользователей из белого списка.
 
-**Логика:**
-1. Пользователь включил WG в боте
-2. Записывается `scheduler.state` с меткой времени + указанием «выключить через 30 мин»
-3. Ставится `at`-задача: `at now + 30 minutes` → `wg-quick down wg0`
-4. Если пользователь выключает WG вручную раньше — `atrm` отменяет задачу
-5. Если пользователь перезапускает таймер (например продлевает) — старая `at`-задача удаляется, ставится новая
+Таймер живёт в ОЗУ процесса. `at`/`cron` не используются.
 
-**Почему `at`**, а не cron:
-- `at` ставит одноразовую задачу на точное время
-- Не нужно парсить cron и не нужно state polling
-- `opkg install at` доступен в Entware
+### 4. Wake-on-LAN (`internal/wol`)
 
-Резерв: если `at` недоступен — cron + state file с меткой времени (скрипт проверяет каждую минуту).
+Отправка magic packet через UDP-сокет.
 
-### 5. Telegram Bot (`bot.py`)
+**Формат пакета:** 6 байт `0xFF` + 16 повторов MAC-адреса (102 байта).
 
-Библиотека: `pyTelegramBotAPI` **< 4.28** (без aiohttp, экономит сборку на MIPS).
+**Отправка:**
+- Основной порт: UDP 9 (discard)
+- Fallback: UDP 7 (echo) — шлётся дополнительно для надёжности
+- Адрес: broadcast из конфига хоста
+- Используется `net.DialUDP`, без внешних пакетов
 
-**Команды:**
-```
-/start        — приветствие, проверка доступа
-/status       — статус WG (вкл/выкл, handshake, трафик)
-/on           — включить WG + запустить таймер 30 мин
-/off          — выключить WG + отменить таймер
-/timer N     — включить WG на N минут (переопределяет 30)
-/wol <host>  — отправить WoL на хост (по имени из конфига)
-/wol_list    — список хостов для WoL
-```
+**Парсинг MAC:** принимает форматы `AA:BB:CC:DD:EE:FF`, `aa-bb-cc-dd-ee-ff`, `AABBCCDDEEFF`.
 
-**Клавиатура:** Reply/inline кнопки для /on, /off, /status.
+### 5. Proxy (`internal/proxy`)
 
-### 6. Installer (`install.sh`)
+HTTP-клиент с опциональным SOCKS5-прокси и IPv6-first resolution.
 
-Идемпотентный скрипт:
+**Режимы:**
+1. **Без прокси** — обычный `http.Client` (с `prefer_ipv6` или без)
+2. **SOCKS5 без авторизации** — `golang.org/x/net/proxy`
+3. **SOCKS5 с авторизацией** — `proxy.Auth{User, Password}`
+
+**IPv6-first dialer:** обёртка `proxy.ContextDialer`, которая резолвит AAAA-записи раньше A. Используется и как самостоятельный диалектор, и как `base` для SOCKS5.
+
+**Таймауты:**
+- `ResponseHeaderTimeout`: 75 с
+- Общий `Timeout`: 90 с
+
+### 6. Bot (`internal/bot`)
+
+Обработка Telegram-сообщений и callback-запросов.
+
+**Интерфейс — только inline-кнопки:**
+
+| Кнопка | `callback_data` | Действие |
+|--------|-----------------|----------|
+| ✅ Включить | `wg_on` | `wg.Up()` + запуск таймера |
+| ❌ Выключить | `wg_off` | Остановка таймера + `wg.Down()` |
+| 🔄 Статус | `wg_status` | `wg.Show()` + форматирование |
+| ⏱ Продлить | `scheduler_extend` | Перезапуск таймера |
+| ⚡ WoL сервер | `wol_server` | Magic packet на первый хост |
+
+**Команды (отладочные):**
+- `/start` — главное меню
+- `/status` — статус WG
+- Текст «статус» — эквивалент `/status`
+
+**Access control:**
+- Проверка `IsAllowed()` на каждое сообщение и callback
+- При отказе — `⛔ Доступ запрещён`
+
+**Polling:** `GetUpdatesChan` с таймаутом 60 с, в цикле с контекстом.
+
+### 7. Main (`cmd/wg-bot`)
+
+Точка входа и graceful shutdown.
+
+**Поток:**
+1. `flag.Parse()` — путь к конфигу (по умолчанию `/opt/etc/wg-bot/config.toml`)
+2. `config.Load()` — загрузка и валидация
+3. `proxy.NewHTTPClient()` — создание HTTP-клиента
+4. `tgbotapi.NewBotAPIWithClient()` — инициализация API
+5. `bot.New()` — создание бота (создаёт WG-менеджер и таймер)
+6. `signal.Notify(SIGINT, SIGTERM)` — ожидание сигнала
+7. `b.Run(ctx)` — цикл polling'а
+8. При получении сигнала — `cancel()`, корректное завершение
+
+Логирование: `log.Ldate|log.Ltime|log.Lshortfile`.
+
+## Безопасность
+
+### Shell injection
+Все вызовы `wg-quick` и `wg` — через `exec.CommandContext`, имя интерфейса подставляется как аргумент, shell не используется. Валидация: `#nosec G204` с комментарием о происхождении параметра из локального конфига.
+
+### Access control
+Бот отвечает только пользователям из белого списка `allowed_users`. Проверка — на каждое сообщение и callback. Пара `chat_id + user_id` должна совпадать полностью.
+
+### Secrets
+- `bot_token` только в `/opt/etc/wg-bot/config.toml` (`chmod 600`)
+- `.gitignore` исключает `config.toml`
+- В репозитории — только `config.toml.example` без реальных токенов
+
+### CI security checks
+- **gosec** — статический анализ на уязвимости
+- **gitleaks** — поиск секретов в коммитах
+- Оба запускаются в CI на каждый push и PR
+
+## Сборка
+
+### Локально
 
 ```bash
-#!/bin/sh
-# 1. Проверка: запущен ли на Keenetic с Entware
-# 2. opkg update && opkg install python3 python3-pip python3-venv at wakeonlan
-# 3. Копирование файлов из репо в /opt/wg-bot/
-# 4. Создание venv: python3 -m venv /opt/wg-bot/venv
-# 5. pip install -r /opt/wg-bot/requirements.txt
-# 6. Создание /opt/etc/wg-bot/config.yaml (если нет — копия примера)
-# 7. chmod 600 /opt/etc/wireguard/wg0.conf
-# 8. Настройка автозапуска:
-#    - Добавить �� /opt/etc/init.d/S99wg-bot (запуск от root)
-#    (или через Entware rc.unslung)
-# 9. Запуск бота
+make all          # fmt → lint → security → test → build
+make build        # кросс-компиляция: amd64 + mipsle softfloat
+make release      # test + build + упаковка в tar.gz
+make test         # go test -v -count=1 -race ./...
 ```
 
-### 7. Init-скрипт (`/opt/etc/init.d/S99wg-bot`)
+### Кросс-компиляция
 
-```sh
-#!/bin/sh
-# Standard Entware init script
-START=99
-start() {
-    cd /opt/wg-bot && venv/bin/python src/main.py &
-}
-stop() {
-    kill $(cat /opt/wg-bot/bot.pid 2>/dev/null)
-}
-```
+| Цель | `GOOS` | `GOARCH` | `GOMIPS` | LDFLAGS |
+|------|--------|----------|----------|---------|
+| amd64 | linux | amd64 | — | `-s -w` |
+| Keenetic | linux | mipsle | softfloat | `-s -w` |
 
-### 8. Безопасность
+Флаги `-s -w` убирают символы и DWARF-таблицу, уменьшая размер бинарника.
 
-- Конфиг с токеном — chmod 600
-- `.gitignore` исключает `config.yaml` (только `.example`)
-- Бот проверяет chat_id + user_id из белого списка
-- `install.sh` не содержит секретов
-- Все пароли/токены только в `/opt/etc/wg-bot/config.yaml`
-
-## Поток: Включить WG на 30 мин
+### GitHub Actions CI
 
 ```
-User → /on
-  Bot: проверка auth
-  Bot: запуск wg-quick up wg0
-  Bot: проверка `wg show wg0` — alive
-  Bot: запись scheduler.state (timestamp + on)
-  Bot: at now + 30 min → wg-quick down wg0
-  Bot: ✅ WG включён, отключится через 30 мин
-
-  ... 30 мин проходит ...
-
-  at → wg-quick down wg0
-  Bot: (ничего — at запущен не в контексте бота)
-  Но! scheduler.state проверяет: WG down → чистит state
-
-  User → /status
-  Bot: WG выключен (отключился по таймеру)
+push/PR → lint → gosec → gitleaks → test(-race) → build(amd64+mipsle)
+         ↑_____ один джоб (Lint & Security) ______↑
+                                                   ↓
+                                         tag v* → release
 ```
 
-## Уточнения к тебе
+Два джоба:
+- **lint** — `golangci-lint` + `gosec` + `gitleaks`
+- **test** — `go test -race` (параллельно с lint)
 
-Прежде чем писать код — пара финальных вопросов:
+После них:
+- **build** — кросс-компиляция, загрузка артефактов
+- **release** (только для тегов `v*`) — упаковка `tar.gz` + GitHub Release
 
-1. **WG интерфейс точно `wg0`?** Может быть `wg1` или другое имя.
-2. **AsRock Z97 Extreme 4** — WoL в BIOS включён? Нужно будет слать broadcast на интерфейс, к которому подключён сервер (обычно LAN порт от Keenetic). Какой у сервера IP? (Для определения broadcast).
-3. **Модель Keenetic** — MIPS или ARM? (От этого зависит архитектура пакетов в Entware, но `install.sh` сам определит).
-4. **Доступ в интернет через WG?** После `wg-quick up wg0` — трафик идёт через туннель? Keenetic умеет селективно маршрутизировать, но надо понимать твою схему (весь трафик или только часть?).
-5. **Приоритеты** — что важнее: простая установка или минимальный размер пакетов на MIPS?
+## Ключевые решения
 
-Утверждаешь архитектуру? Если всё ок — пишу код.
+| Решение | Значение | Причина |
+|---------|----------|---------|
+| Язык | Go | Статика, кросс-компиляция одной строкой, ноль зависимостей на роутере |
+| Цель | MIPSEL soft-float | Entware на Keenetic — `mipsel-3.4`, аппаратное FPU отсутствует |
+| GOARCH | `mipsle` + `GOMIPS=softfloat` | Эмуляция float в софте |
+| Telegram API | `go-telegram-bot-api/v5` | Стандарт, pure Go |
+| Конфиг | TOML | Человекочитаемый, с комментариями, строгая типизация |
+| WoL | `net.DialUDP` → broadcast | Чистый сокет, без extern-пакетов |
+| WG | `os/exec` → `wg-quick up/down` | `shell=false` — без инъекций |
+| Таймер | `time.AfterFunc` + мьютекс | Живёт внутри процесса, `at`/`cron` не нужны |
+| Прокси | `golang.org/x/net/proxy` | SOCKS5 из extended stdlib |
+| Сборка | GitHub Actions | Lint + gosec + gitleaks + test + build + release |
+| Интерфейс | Inline-клавиатура | Без текстовых команд, callback_data, мгновенная реакция |

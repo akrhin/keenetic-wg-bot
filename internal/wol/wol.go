@@ -7,6 +7,7 @@ package wol
 import (
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 )
@@ -44,11 +45,21 @@ func Send(macStr, broadcastStr string) error {
 	}
 
 	// Шлём ещё на порт 7 для надёжности
-	addr2, _ := net.ResolveUDPAddr("udp4", net.JoinHostPort(broadcastStr, "7"))
-	conn2, _ := net.DialUDP("udp4", nil, addr2)
-	if conn2 != nil {
-		defer conn2.Close()
-		_, _ = conn2.Write(pkt)
+	addr2, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(broadcastStr, "7"))
+	if err != nil {
+		log.Printf("[wol] fallback port 7: resolve addr: %v", err)
+	} else {
+		conn2, err := net.DialUDP("udp4", nil, addr2)
+		if err != nil {
+			log.Printf("[wol] fallback port 7: dial: %v", err)
+		} else {
+			if _, err := conn2.Write(pkt); err != nil {
+				log.Printf("[wol] fallback port 7: write: %v", err)
+			}
+			if err := conn2.Close(); err != nil {
+				log.Printf("[wol] fallback port 7: close: %v", err)
+			}
+		}
 	}
 
 	return nil
