@@ -14,6 +14,7 @@ test:
 lint:
 	golangci-lint run ./... 2>/dev/null || go vet ./...
 
+# CI: requires Go 1.25.8+ for gosec v2.28 (runs in CI with ubuntu-latest)
 security:
 	gosec -quiet ./...
 	gitleaks detect --no-git --verbose

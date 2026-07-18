@@ -1,5 +1,5 @@
 [telegram]
-bot_token = "1234567890:ABCDEFghijklmnopqrstuvwxyz"
+bot_token = "YOUR_BOT_TOKEN"
 
 [[telegram.allowed_users]]
 chat_id = 123456789

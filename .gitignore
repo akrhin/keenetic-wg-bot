@@ -1,5 +1,7 @@
-# Binaries
+# Binaries (built locally, not committed)
 /wg-bot
+/wg-bot-amd64
+/wg-bot-mipsle
 wg-bot.exe
 wg-bot-*
 !cmd/**/main.go
@@ -7,6 +9,7 @@ wg-bot-*
 # Build output
 dist/
 build/
+wg-bot-mipsle.tar.gz
 
 # IDE
 .idea/

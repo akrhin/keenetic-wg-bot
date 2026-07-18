@@ -39,6 +39,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: go vet
+        run: go vet ./...
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+           go-version-input: ${{ env.GO_VERSION }}
+
   test:
     name: Test
     runs-on: ubuntu-latest
