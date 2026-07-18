@@ -1,0 +1,24 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - misspell
+  settings:
+    gosec:
+      excludes:
+        - G204   # exec.Command — by design, wg-quick
+        - G304   # os.ReadFile with path from config flag
+        - G301   # MkdirAll permissions — root-only context
+        - G302   # WriteFile permissions — root-only context
+        - G306   # WriteFile permissions — root-only context
+        - G101   # Hardcoded credentials — only in test/examples
+formatters:
+  enable:
+    - gofmt
+    - goimports
