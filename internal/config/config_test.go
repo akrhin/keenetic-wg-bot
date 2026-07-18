@@ -63,7 +63,7 @@ chat_id = 123
 user_id = 456
 `
 	path := writeTemp(t, content)
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 
 	_, err := Load(path)
 	if err == nil {
@@ -77,7 +77,7 @@ func TestLoad_NoUsers(t *testing.T) {
 bot_token = "test:token"
 `
 	path := writeTemp(t, content)
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 
 	_, err := Load(path)
 	if err == nil {
