@@ -37,7 +37,7 @@ keenetic-wg-bot/
 └── .github/workflows/build.yml     # CI: lint+gosec+gitleaks → test → build → release
 ```
 
-Каждый пакет имеет тесты (`_test.go`).
+Большинство пакетов имеет тесты (`_test.go`).
 
 ## Компоненты
 
@@ -214,12 +214,11 @@ push/PR → lint → gosec → gitleaks → test(-race) → build(amd64+mipsle)
                                          tag v* → release
 ```
 
-Два джоба:
+Четыре джоба:
 - **lint** — `golangci-lint` + `gosec` + `gitleaks`
-- **test** — `go test -race` (параллельно с lint)
-
-После них:
-- **build** — кросс-компиляция, загрузка артефактов
+- **vet** — `go vet` + `govulncheck` (параллельно с lint)
+- **test** — `go test -race` (после lint + vet)
+- **build** — кросс-компиляция, загрузка артефактов (после test)
 - **release** (только для тегов `v*`) — упаковка `tar.gz` + GitHub Release
 
 ## Ключевые решения

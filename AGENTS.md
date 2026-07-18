@@ -39,12 +39,15 @@ install.sh                      # Entware installer (idempotent)
 ## Пайплайн CI
 
 ```yaml
-push → lint (golangci) → gosec → gitleaks → vet → govulncheck
-                                                     ↓
-                                              test (-race)
-                                                     ↓
-                                              build → [tag→release]
+push → lint (golangci+gosec+gitleaks) ──→ build ←── test (-race)
+         ↑                                     ↓
+      vet (go vet+govulncheck)               release (тег v*)
 ```
+
+Более детально:
+- **lint** + **vet** — параллельно
+- **test** — после lint
+- **build** — после lint + test (vet не блокирует build)
 
 ## Сборка (локально)
 
