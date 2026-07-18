@@ -38,7 +38,7 @@ func Send(macStr, broadcastStr string) error {
 	if err != nil {
 		return fmt.Errorf("wol: dial: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.Write(pkt); err != nil {
 		return fmt.Errorf("wol: write: %w", err)

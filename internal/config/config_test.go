@@ -23,7 +23,7 @@ interface = "wg0"
 auto_off_minutes = 30
 `
 	path := writeTemp(t, content)
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -120,6 +120,6 @@ func writeTemp(t *testing.T, content string) string {
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	f.Close()
+	_ = f.Close()
 	return f.Name()
 }

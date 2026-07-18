@@ -298,11 +298,11 @@ func formatStatus(s *wireguard.Status, err error, t *scheduler.Timer) string {
 		return b.String()
 	}
 
-	b.WriteString(fmt.Sprintf("🔌 **Интерфейс:** `%s`\n", s.Interface))
+	fmt.Fprintf(&b, "🔌 **Интерфейс:** `%s`\n", s.Interface)
 	if s.ListenPort > 0 {
-		b.WriteString(fmt.Sprintf("🔢 **Порт:** %d\n", s.ListenPort))
+		fmt.Fprintf(&b, "🔢 **Порт:** %d\n", s.ListenPort)
 	}
-	b.WriteString(fmt.Sprintf("👥 **Пиров:** %d\n", s.PeerCount))
+	fmt.Fprintf(&b, "👥 **Пиров:** %d\n", s.PeerCount)
 
 	if timerInfo := t.String(); timerInfo != "not running" {
 		b.WriteString("\n⏱ " + timerInfo + "\n")
