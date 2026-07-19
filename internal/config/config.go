@@ -52,8 +52,7 @@ type WOLHost struct {
 }
 
 type SchedulerConfig struct {
-	AutoOffMinutes int    `toml:"auto_off_minutes"`
-	StateFile      string `toml:"state_file"`
+	AutoOffMinutes int `toml:"auto_off_minutes"`
 }
 
 // ProxyConfig — прокси для Telegram API (SOCKS5 с авторизацией или без).

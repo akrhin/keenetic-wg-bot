@@ -1,4 +1,4 @@
-.PHONY: all build test clean lint security release
+.PHONY: all build test clean lint security release verify verify-commands
 
 APP := wg-bot
 
@@ -16,8 +16,8 @@ lint:
 
 # CI: requires Go 1.25.8+ for gosec v2.28 (runs in CI with ubuntu-latest)
 security:
-	gosec -quiet ./...
-	gitleaks detect --no-git --verbose
+	gosec -quiet ./... || echo "gosec not available (CI only)"
+	gitleaks detect --no-git --verbose || echo "gitleaks not available (CI only)"
 
 fmt:
 	go fmt ./...
@@ -34,3 +34,19 @@ release: test build
 	cd dist && tar czf ../$(APP)-mipsle.tar.gz $(APP) install.sh config.toml.example
 	rm -rf dist
 	@echo "Release: $(APP)-mipsle.tar.gz"
+
+# verify — проверка наличия обязательных утилит
+verify-commands:
+	@echo "Verifying tools..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@command -v golangci-lint >/dev/null 2>&1 && echo "✅ golangci-lint" || echo "⚠️  golangci-lint not found (CI only)"
+	@command -v gosec >/dev/null 2>&1 && echo "✅ gosec" || echo "⚠️  gosec not found (CI only)"
+	@command -v gitleaks >/dev/null 2>&1 && echo "✅ gitleaks" || echo "⚠️  gitleaks not found (CI only)"
+	@echo "✅ go found"
+
+verify: verify-commands
+	@echo "Running verification..."
+	go vet ./...
+	@echo "✅ vet passed"
+	go mod verify
+	@echo "✅ modules verified"

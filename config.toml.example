@@ -16,7 +16,6 @@ broadcast = "192.168.1.255"
 
 [scheduler]
 auto_off_minutes = 30
-state_file = "/opt/etc/wg-bot/scheduler.state"
 
 [network]
 # prefer_ipv6 = true   # резолвить AAAA (IPv6) раньше A (IPv4)

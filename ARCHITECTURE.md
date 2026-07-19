@@ -10,7 +10,7 @@
 
 | Компонент | Технология | Обоснование |
 |-----------|------------|-------------|
-| Язык | Go 1.23+ | Один бинарник, кросс-компиляция, ноль зависимостей на роутере |
+| Язык | Go 1.25+ | Один бинарник, кросс-компиляция, ноль зависимостей на роутере |
 | Telegram API | `go-telegram-bot-api/v5` | Pure Go, стандарт де-факто |
 | Конфиг | TOML (`BurntSushi/toml`) | Человекочитаемый, с комментариями, строгая типизация |
 | Прокси | `golang.org/x/net/proxy` | SOCKS5 из стандартного extended-пакета |
@@ -58,7 +58,6 @@ keenetic-wg-bot/
 - `allowed_users` не может быть пустым
 - Для каждого WoL-хоста обязательны `name` и `mac`
 - `interface`, `config_path`, `auto_off_minutes` имеют значения по умолчанию
-
 **Access control:** метод `IsAllowed(chatID, userID int64) bool` проверяет пару `chat_id + user_id` по белому списку.
 
 ### 2. WireGuard Manager (`internal/wireguard`)

@@ -2,6 +2,8 @@
 //
 // Использует wg-quick для up/down и wg show для статуса.
 // Все вызовы — через exec.Command (без shell), никаких инъекций.
+//
+// Testing: передайте mock Executor в NewWithExecutor для изоляции.
 package wireguard
 
 import (
@@ -12,6 +14,28 @@ import (
 	"strings"
 	"time"
 )
+
+// Executor — интерфейс для выполнения команд wg/wg-quick.
+// В продакшене — RealExecutor (os/exec). В тестах — MockExecutor.
+type Executor interface {
+	Run(ctx context.Context, name string, arg ...string) ([]byte, error)
+}
+
+// RealExecutor выполняет команды через os/exec.
+type RealExecutor struct{}
+
+func (e RealExecutor) Run(ctx context.Context, name string, arg ...string) ([]byte, error) {
+	// #nosec G204 — name/arg from local config, not user input
+	return exec.CommandContext(ctx, name, arg...).Output()
+}
+
+// CombinedExec выполняет команду и возвращает объединённый stdout+stderr.
+type CombinedExec struct{}
+
+func (e CombinedExec) Run(ctx context.Context, name string, arg ...string) ([]byte, error) {
+	// #nosec G204 — name/arg from local config, not user input
+	return exec.CommandContext(ctx, name, arg...).CombinedOutput()
+}
 
 // Status содержит текущее состояние WG-интерфейса.
 type Status struct {
@@ -27,19 +51,32 @@ type Status struct {
 
 // Manager управляет WG-интерфейсом.
 type Manager struct {
-	iface string
+	iface    string
+	exec     Executor
+	combExec Executor // для wg-quick (CombinedOutput)
 }
 
 // New создаёт Manager для указанного интерфейса.
 func New(iface string) *Manager {
-	return &Manager{iface: iface}
+	return &Manager{
+		iface:    iface,
+		exec:     RealExecutor{},
+		combExec: CombinedExec{},
+	}
+}
+
+// NewWithExecutor создаёт Manager с указанным Executor (для тестов).
+func NewWithExecutor(iface string, exec Executor, combExec Executor) *Manager {
+	return &Manager{
+		iface:    iface,
+		exec:     exec,
+		combExec: combExec,
+	}
 }
 
 // Up поднимает интерфейс через wg-quick up.
 func (m *Manager) Up(ctx context.Context) error {
-	// #nosec G204 — m.iface comes from local config, not user input
-	cmd := exec.CommandContext(ctx, "wg-quick", "up", m.iface)
-	out, err := cmd.CombinedOutput()
+	out, err := m.combExec.Run(ctx, "wg-quick", "up", m.iface)
 	if err != nil {
 		return fmt.Errorf("wg-quick up %s: %w\n%s", m.iface, err, string(out))
 	}
@@ -48,9 +85,7 @@ func (m *Manager) Up(ctx context.Context) error {
 
 // Down опускает интерфейс через wg-quick down.
 func (m *Manager) Down(ctx context.Context) error {
-	// #nosec G204 — m.iface comes from local config, not user input
-	cmd := exec.CommandContext(ctx, "wg-quick", "down", m.iface)
-	out, err := cmd.CombinedOutput()
+	out, err := m.combExec.Run(ctx, "wg-quick", "down", m.iface)
 	if err != nil {
 		return fmt.Errorf("wg-quick down %s: %w\n%s", m.iface, err, string(out))
 	}
@@ -59,23 +94,17 @@ func (m *Manager) Down(ctx context.Context) error {
 
 // Show возвращает статус интерфейса через wg show.
 func (m *Manager) Show(ctx context.Context) (*Status, error) {
-	// #nosec G204 — m.iface comes from local config, not user input
-	cmd := exec.CommandContext(ctx, "wg", "show", m.iface, "dump")
-	out, err := cmd.Output()
+	out, err := m.exec.Run(ctx, "wg", "show", m.iface, "dump")
 	if err != nil {
-		// Если интерфейс не существует — это не ошибка, просто не запущен.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			stderr := string(exitErr.Stderr)
-			// BusyBox wg: "Cannot find device wg0"
-			// wg-tools: "wg: Device does not exist: wg0"
 			if strings.Contains(stderr, "Cannot find") || strings.Contains(stderr, "does not exist") {
 				return &Status{Running: false, Interface: m.iface}, nil
 			}
 		}
 		return nil, fmt.Errorf("wg show %s: %w", m.iface, err)
 	}
-
 	return parseDump(m.iface, string(out))
 }
 

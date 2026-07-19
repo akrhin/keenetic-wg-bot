@@ -32,10 +32,19 @@ func TestParseMAC(t *testing.T) {
 	}
 }
 
-func TestParseMAC_Invalid(t *testing.T) {
-	_, err := parseMAC("invalid")
+func TestSend_Localhost(t *testing.T) {
+	// Шлём на localhost:9999 — UDP без соединения, пакет просто улетит.
+	// Ошибка может быть только если система не даёт открыть UDP-сокет.
+	err := Send("AA:BB:CC:DD:EE:FF", "127.0.0.255")
+	if err != nil {
+		t.Fatalf("Send to localhost failed: %v", err)
+	}
+}
+
+func TestSend_InvalidMAC(t *testing.T) {
+	err := Send("invalid", "127.0.0.255")
 	if err == nil {
-		t.Error("expected error for invalid MAC")
+		t.Fatal("expected error for invalid MAC")
 	}
 }
 

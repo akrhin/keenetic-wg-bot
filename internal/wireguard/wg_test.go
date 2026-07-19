@@ -1,8 +1,30 @@
 package wireguard
 
 import (
+	"context"
+	"errors"
+	"os/exec"
 	"testing"
 )
+
+// mockExec реализует Executor для тестов.
+type mockExec struct {
+	out   []byte
+	err   error
+	stder []byte // имитация stderr в ExitError
+}
+
+func (m *mockExec) Run(_ context.Context, name string, arg ...string) ([]byte, error) {
+	if m.err != nil {
+		// Имитируем ExitError если есть stderr
+		if m.stder != nil {
+			exitErr := &exec.ExitError{Stderr: m.stder}
+			return m.out, exitErr
+		}
+		return m.out, m.err
+	}
+	return m.out, nil
+}
 
 func TestParseDump_Running(t *testing.T) {
 	dump := "privateKey\tpublicKey\t51820\tfirewall\t1234"
@@ -45,5 +67,87 @@ func TestParseDump_NotRunning(t *testing.T) {
 	}
 	if s.Running {
 		t.Error("expected running=false for empty dump")
+	}
+}
+
+func TestShow_Success(t *testing.T) {
+	mgr := NewWithExecutor("wg0",
+		&mockExec{out: []byte("key\tkey\t51820\t\t1234")},
+		&mockExec{},
+	)
+	s, err := mgr.Show(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !s.Running {
+		t.Error("expected running=true")
+	}
+}
+
+func TestShow_DeviceNotFound(t *testing.T) {
+	mgr := NewWithExecutor("wg0",
+		&mockExec{
+			out:   []byte{},
+			err:   errors.New("exit status 1"),
+			stder: []byte("Cannot find device wg0"),
+		},
+		&mockExec{},
+	)
+	s, err := mgr.Show(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Running {
+		t.Error("expected running=false for missing device")
+	}
+}
+
+func TestUp_Success(t *testing.T) {
+	mgr := NewWithExecutor("wg0",
+		&mockExec{},
+		&mockExec{out: []byte("ok")},
+	)
+	err := mgr.Up(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUp_Failure(t *testing.T) {
+	mgr := NewWithExecutor("wg0",
+		&mockExec{},
+		&mockExec{
+			out:   []byte("error"),
+			err:   errors.New("exit status 1"),
+			stder: []byte("wg-quick: error"),
+		},
+	)
+	err := mgr.Up(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestDown_Success(t *testing.T) {
+	mgr := NewWithExecutor("wg0",
+		&mockExec{},
+		&mockExec{out: []byte("ok")},
+	)
+	err := mgr.Down(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDown_Failure(t *testing.T) {
+	mgr := NewWithExecutor("wg0",
+		&mockExec{},
+		&mockExec{
+			err: errors.New("exit status 1"),
+		},
+	)
+	err := mgr.Down(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
