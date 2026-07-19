@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.0 (2026-07-19)
+
+### Code Quality
+- **wireguard**: Executor interface (RealExecutor + CombinedExec) для тестирования Up/Down/Show через mock
+- **wireguard**: +6 тестов (Show, Up, Down через mock executor)
+- **wol**: +2 теста (Send на localhost, InvalidMAC)
+- **config**: удалён dead field `StateFile` (не использовался)
+- **Makefile**: `make verify` + `make verify-commands`
+- **Total tests**: 35 (было 28) во всех 7 пакетах
+
+### Security
+- `#nosec G204` перемещён с методов Manager на реализации Executor
+
+### Documentation
+- **ARCHITECTURE.md**: Go 1.25, убран StateFile из описания
+
 ## v0.5.0 (2026-07-18)
 
 ### Security
