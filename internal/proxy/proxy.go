@@ -55,7 +55,10 @@ func NewHTTPClient(cfg *config.Config) (*http.Client, error) {
 		return nil, fmt.Errorf("proxy socks5 dialer: %w", err)
 	}
 
-	ctxDialer := dialer.(proxy.ContextDialer)
+	ctxDialer, ok := dialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, fmt.Errorf("proxy socks5 dialer does not support context dialing")
+	}
 
 	return &http.Client{
 		Transport: &http.Transport{
@@ -107,7 +110,11 @@ func (d *ipv6FirstDialer) DialContext(ctx context.Context, network, addr string)
 	var lastErr error
 	for _, ip := range sorted {
 		target := net.JoinHostPort(ip.String(), port)
-		conn, dialErr := nextCtx.(proxy.ContextDialer).DialContext(ctx, network, target)
+		ctxDialer, ok := nextCtx.(proxy.ContextDialer)
+		if !ok {
+			return nil, fmt.Errorf("next dialer does not support context dialing")
+		}
+		conn, dialErr := ctxDialer.DialContext(ctx, network, target)
 		if dialErr == nil {
 			return conn, nil
 		}
@@ -121,7 +128,11 @@ func (d *ipv6FirstDialer) resolveAndDial(ctx context.Context, network, addr stri
 	if nextCtx == nil {
 		nextCtx = proxy.Direct
 	}
-	return nextCtx.(proxy.ContextDialer).DialContext(ctx, network, addr)
+	ctxDialer, ok := nextCtx.(proxy.ContextDialer)
+	if !ok {
+		return nil, fmt.Errorf("next dialer does not support context dialing")
+	}
+	return ctxDialer.DialContext(ctx, network, addr)
 }
 
 var _ proxy.ContextDialer = (*ipv6FirstDialer)(nil)

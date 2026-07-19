@@ -16,10 +16,11 @@ type mockExec struct {
 
 func (m *mockExec) Run(_ context.Context, name string, arg ...string) ([]byte, error) {
 	if m.err != nil {
-		// Имитируем ExitError если есть stderr
+		// CombinedOutput semantics: stderr is merged into out, exitErr.Stderr is empty
 		if m.stder != nil {
+			merged := append(m.out, m.stder...)
 			exitErr := &exec.ExitError{Stderr: m.stder}
-			return m.out, exitErr
+			return merged, exitErr
 		}
 		return m.out, m.err
 	}
@@ -72,8 +73,8 @@ func TestParseDump_NotRunning(t *testing.T) {
 
 func TestShow_Success(t *testing.T) {
 	mgr := NewWithExecutor("wg0",
-		&mockExec{out: []byte("key\tkey\t51820\t\t1234")},
 		&mockExec{},
+		&mockExec{out: []byte("key	key	51820		1234")},
 	)
 	s, err := mgr.Show(context.Background())
 	if err != nil {
@@ -86,12 +87,12 @@ func TestShow_Success(t *testing.T) {
 
 func TestShow_DeviceNotFound(t *testing.T) {
 	mgr := NewWithExecutor("wg0",
+		&mockExec{},
 		&mockExec{
 			out:   []byte{},
 			err:   errors.New("exit status 1"),
 			stder: []byte("Cannot find device wg0"),
 		},
-		&mockExec{},
 	)
 	s, err := mgr.Show(context.Background())
 	if err != nil {

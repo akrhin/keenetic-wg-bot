@@ -54,6 +54,123 @@ func TestLoad_InvalidPath(t *testing.T) {
 	}
 }
 
+func TestLoad_CommandTimeout_Default(t *testing.T) {
+	content := `
+[telegram]
+bot_token = "test:token"
+
+[[telegram.allowed_users]]
+chat_id = 123
+user_id = 456
+
+[wireguard]
+interface = "wg0"
+
+[wol]
+
+[scheduler]
+auto_off_minutes = 30
+`
+	path := writeTemp(t, content)
+	defer func() { _ = os.Remove(path) }()
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.CommandTimeout != 45 {
+		t.Errorf("CommandTimeout = %d, want 45", cfg.CommandTimeout)
+	}
+}
+
+func TestLoad_CommandTimeout_Custom(t *testing.T) {
+	content := `
+command_timeout = 60
+
+[telegram]
+bot_token = "test:token"
+
+[[telegram.allowed_users]]
+chat_id = 123
+user_id = 456
+
+[wireguard]
+interface = "wg0"
+
+[wol]
+
+[scheduler]
+auto_off_minutes = 30
+`
+	path := writeTemp(t, content)
+	defer func() { _ = os.Remove(path) }()
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.CommandTimeout != 60 {
+		t.Errorf("CommandTimeout = %d, want 60", cfg.CommandTimeout)
+	}
+}
+
+func TestLoad_WOL_InvalidBroadcast(t *testing.T) {
+	content := `
+[telegram]
+bot_token = "test:token"
+
+[[telegram.allowed_users]]
+chat_id = 123
+user_id = 456
+
+[wireguard]
+interface = "wg0"
+
+[[wol.hosts]]
+name = "server"
+mac = "AA:BB:CC:DD:EE:FF"
+broadcast = "not-an-ip"
+`
+	path := writeTemp(t, content)
+	defer func() { _ = os.Remove(path) }()
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid broadcast IP")
+	}
+}
+
+func TestLoad_WOL_EmptyBroadcast(t *testing.T) {
+	content := `
+[telegram]
+bot_token = "test:token"
+
+[[telegram.allowed_users]]
+chat_id = 123
+user_id = 456
+
+[wireguard]
+interface = "wg0"
+
+[[wol.hosts]]
+name = "server"
+mac = "AA:BB:CC:DD:EE:FF"
+`
+	path := writeTemp(t, content)
+	defer func() { _ = os.Remove(path) }()
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.WOL.Hosts) != 1 {
+		t.Fatalf("expected 1 host, got %d", len(cfg.WOL.Hosts))
+	}
+	if cfg.WOL.Hosts[0].Broadcast != "" {
+		t.Errorf("expected empty broadcast, got %q", cfg.WOL.Hosts[0].Broadcast)
+	}
+}
+
 func TestLoad_EmptyToken(t *testing.T) {
 	content := `
 [telegram]

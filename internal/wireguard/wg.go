@@ -8,7 +8,6 @@ package wireguard
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -94,16 +93,14 @@ func (m *Manager) Down(ctx context.Context) error {
 
 // Show возвращает статус интерфейса через wg show.
 func (m *Manager) Show(ctx context.Context) (*Status, error) {
-	out, err := m.exec.Run(ctx, "wg", "show", m.iface, "dump")
+	out, err := m.combExec.Run(ctx, "wg", "show", m.iface, "dump")
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "Cannot find") || strings.Contains(stderr, "does not exist") {
-				return &Status{Running: false, Interface: m.iface}, nil
-			}
+		// CombinedOutput — stderr merged into out, exitErr.Stderr is empty
+		// So we check out for "Cannot find" / "does not exist" strings
+		if strings.Contains(string(out), "Cannot find") || strings.Contains(string(out), "does not exist") {
+			return &Status{Running: false, Interface: m.iface}, nil
 		}
-		return nil, fmt.Errorf("wg show %s: %w", m.iface, err)
+		return nil, fmt.Errorf("wg show %s: %w\n%s", m.iface, err, string(out))
 	}
 	return parseDump(m.iface, string(out))
 }

@@ -89,15 +89,27 @@ func (b *Bot) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case update := <-updates:
-			b.handleUpdate(update)
+			b.handleUpdate(ctx, update)
 		}
 	}
 }
 
-func (b *Bot) handleUpdate(update tgbotapi.Update) {
+// Shutdown выполняет graceful shutdown: останавливает таймер и опускает WG.
+func (b *Bot) Shutdown(ctx context.Context) {
+	log.Println("[bot] shutting down...")
+	if b.sched != nil {
+		b.sched.Stop()
+	}
+	if err := b.wg.Down(ctx); err != nil {
+		log.Printf("[bot] wg down on shutdown: %v", err)
+	}
+	log.Println("[bot] shutdown complete")
+}
+
+func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 	// Callback — нажатие кнопки
 	if update.CallbackQuery != nil {
-		b.handleCallback(update.CallbackQuery)
+		b.handleCallback(ctx, update.CallbackQuery)
 		return
 	}
 
@@ -131,7 +143,7 @@ func (b *Bot) cb(cq *tgbotapi.CallbackQuery, text string) {
 	_, _ = b.api.Request(tgbotapi.NewCallback(cq.ID, text))
 }
 
-func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
+func (b *Bot) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQuery) {
 	log.Printf("[bot] callback: data=%s from=%d chat=%d", cq.Data, cq.From.ID, cq.Message.Chat.ID)
 
 	// Проверка доступа
@@ -140,20 +152,22 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	// Используем командный таймаут из конфига
+	timeout := time.Duration(b.cfg.CommandTimeout) * time.Second
+	cmdCtx, cmdCancel := context.WithTimeout(ctx, timeout)
+	defer cmdCancel()
 
 	switch cq.Data {
 	case "wg_on":
-		b.cmdOn(cq, ctx)
+		b.cmdOn(cq, cmdCtx)
 	case "wg_off":
-		b.cmdOff(cq, ctx)
+		b.cmdOff(cq, cmdCtx)
 	case "wg_status":
-		b.cmdStatus(cq, ctx)
+		b.cmdStatus(cq, cmdCtx)
 	case "scheduler_extend":
-		b.cmdExtend(cq, ctx)
+		b.cmdExtend(cq, cmdCtx)
 	case "wol_server":
-		b.cmdWOL(cq, ctx)
+		b.cmdWOL(cq, cmdCtx)
 	default:
 		b.cb(cq, "❓ Неизвестная команда")
 	}

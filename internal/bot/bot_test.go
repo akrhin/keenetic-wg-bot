@@ -75,7 +75,7 @@ func TestHandleCallback_AccessDenied(t *testing.T) {
 
 	// Неавторизованный пользователь
 	cq := makeCallback(999, 999, "wg_on")
-	b.handleCallback(cq)
+	b.handleCallback(context.Background(), cq)
 	// Если дожили до конца без паники — тест пройден
 }
 
@@ -84,7 +84,7 @@ func TestHandleCallback_UnknownCommand(t *testing.T) {
 	b := newBotForTest(mockWG)
 
 	cq := makeCallback(100, 200, "unknown_cmd")
-	b.handleCallback(cq)
+	b.handleCallback(context.Background(), cq)
 }
 
 func TestHandleCallback_WGOn_Success(t *testing.T) {
@@ -92,7 +92,7 @@ func TestHandleCallback_WGOn_Success(t *testing.T) {
 	b := newBotForTest(mockWG)
 
 	cq := makeCallback(100, 200, "wg_on")
-	b.handleCallback(cq)
+	b.handleCallback(context.Background(), cq)
 }
 
 func TestHandleCallback_WGOff_Success(t *testing.T) {
@@ -100,7 +100,7 @@ func TestHandleCallback_WGOff_Success(t *testing.T) {
 	b := newBotForTest(mockWG)
 
 	cq := makeCallback(100, 200, "wg_off")
-	b.handleCallback(cq)
+	b.handleCallback(context.Background(), cq)
 }
 
 func TestHandleCallback_WGStatus(t *testing.T) {
@@ -108,7 +108,7 @@ func TestHandleCallback_WGStatus(t *testing.T) {
 	b := newBotForTest(mockWG)
 
 	cq := makeCallback(100, 200, "wg_status")
-	b.handleCallback(cq)
+	b.handleCallback(context.Background(), cq)
 }
 
 func TestHandleCallback_WOL(t *testing.T) {
@@ -116,7 +116,7 @@ func TestHandleCallback_WOL(t *testing.T) {
 	b := newBotForTest(mockWG)
 
 	cq := makeCallback(100, 200, "wol_server")
-	b.handleCallback(cq)
+	b.handleCallback(context.Background(), cq)
 }
 
 func TestHandleCallback_Extend(t *testing.T) {
@@ -128,7 +128,7 @@ func TestHandleCallback_Extend(t *testing.T) {
 	defer b.sched.Stop()
 
 	cq := makeCallback(100, 200, "scheduler_extend")
-	b.handleCallback(cq)
+	b.handleCallback(context.Background(), cq)
 }
 
 func TestHandleCallback_WGOn_Failure(t *testing.T) {
@@ -139,7 +139,7 @@ func TestHandleCallback_WGOn_Failure(t *testing.T) {
 	b := newBotForTest(mockWG)
 
 	cq := makeCallback(100, 200, "wg_on")
-	b.handleCallback(cq)
+	b.handleCallback(context.Background(), cq)
 }
 
 // -- helpers --

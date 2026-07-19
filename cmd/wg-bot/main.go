@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -64,6 +65,11 @@ func main() {
 	if err := b.Run(ctx); err != nil && err != context.Canceled {
 		log.Fatalf("[wg-bot] run: %v", err)
 	}
+
+	// Graceful shutdown: останавливаем таймер и опускаем WG
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+	b.Shutdown(shutdownCtx)
 
 	log.Println("[wg-bot] stopped")
 }

@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/BurntSushi/toml"
@@ -13,12 +14,13 @@ import (
 
 // Config — корневая структура конфигурации.
 type Config struct {
-	Telegram  TelegramConfig  `toml:"telegram"`
-	WireGuard WireGuardConfig `toml:"wireguard"`
-	WOL       WOLConfig       `toml:"wol"`
-	Scheduler SchedulerConfig `toml:"scheduler"`
-	Network   NetworkConfig   `toml:"network"`
-	Proxy     ProxyConfig     `toml:"proxy"`
+	Telegram      TelegramConfig      `toml:"telegram"`
+	WireGuard     WireGuardConfig     `toml:"wireguard"`
+	WOL           WOLConfig           `toml:"wol"`
+	Scheduler     SchedulerConfig     `toml:"scheduler"`
+	Network       NetworkConfig       `toml:"network"`
+	Proxy         ProxyConfig         `toml:"proxy"`
+	CommandTimeout int                `toml:"command_timeout"`
 }
 
 type NetworkConfig struct {
@@ -97,10 +99,18 @@ func Load(path string) (*Config, error) {
 	if cfg.Scheduler.AutoOffMinutes == 0 {
 		cfg.Scheduler.AutoOffMinutes = 30
 	}
+	if cfg.CommandTimeout <= 0 {
+		cfg.CommandTimeout = 45
+	}
 
 	for _, h := range cfg.WOL.Hosts {
 		if h.Name == "" || h.MAC == "" {
 			return nil, fmt.Errorf("config: wol.host requires name and mac")
+		}
+		if h.Broadcast != "" {
+			if net.ParseIP(h.Broadcast) == nil {
+				return nil, fmt.Errorf("config: wol.host %q: invalid broadcast IP %q", h.Name, h.Broadcast)
+			}
 		}
 	}
 
