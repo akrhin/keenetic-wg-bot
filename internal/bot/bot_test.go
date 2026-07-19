@@ -1,13 +1,166 @@
-// Package bot — tests for Telegram bot logic (white-box).
 package bot
 
 import (
+	"context"
+	"log"
 	"testing"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
+	"github.com/akrhin/keenetic-wg-bot/internal/config"
 	"github.com/akrhin/keenetic-wg-bot/internal/scheduler"
 	"github.com/akrhin/keenetic-wg-bot/internal/wireguard"
 )
+
+// mockAPI реализует APIClient для тестов.
+type mockAPI struct {
+	sendFn    func(c tgbotapi.Chattable) (tgbotapi.Message, error)
+	requestFn func(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error)
+}
+
+func (m *mockAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	if m.sendFn != nil {
+		return m.sendFn(c)
+	}
+	return tgbotapi.Message{}, nil
+}
+
+func (m *mockAPI) Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	if m.requestFn != nil {
+		return m.requestFn(c)
+	}
+	return &tgbotapi.APIResponse{}, nil
+}
+
+func (m *mockAPI) GetUpdatesChan(u tgbotapi.UpdateConfig) tgbotapi.UpdatesChannel {
+	return make(tgbotapi.UpdatesChannel)
+}
+
+func newBotForTest(wg *wireguard.Manager) *Bot {
+	cfg := &config.Config{
+		Telegram: config.TelegramConfig{
+			BotToken: "test:token",
+			AllowedUsers: []config.AllowedUser{
+				{ChatID: 100, UserID: 200},
+			},
+		},
+		WireGuard: config.WireGuardConfig{Interface: "wg0"},
+		WOL: config.WOLConfig{
+			Hosts: []config.WOLHost{
+				{Name: "server", MAC: "AA:BB:CC:DD:EE:FF", Broadcast: "192.168.1.255"},
+			},
+		},
+		Scheduler: config.SchedulerConfig{AutoOffMinutes: 30},
+	}
+	sched := scheduler.New(func() { log.Println("timer fired (test)") })
+	return NewWithClient(&mockAPI{}, cfg, wg, sched)
+}
+
+func makeCallback(chatID, userID int64, data string) *tgbotapi.CallbackQuery {
+	return &tgbotapi.CallbackQuery{
+		ID:   "cq_test",
+		From: &tgbotapi.User{ID: userID},
+		Message: &tgbotapi.Message{
+			Chat: &tgbotapi.Chat{ID: chatID},
+			MessageID: 42,
+		},
+		Data: data,
+	}
+}
+
+func TestHandleCallback_AccessDenied(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	b := newBotForTest(mockWG)
+
+	// Неавторизованный пользователь
+	cq := makeCallback(999, 999, "wg_on")
+	b.handleCallback(cq)
+	// Если дожили до конца без паники — тест пройден
+}
+
+func TestHandleCallback_UnknownCommand(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	b := newBotForTest(mockWG)
+
+	cq := makeCallback(100, 200, "unknown_cmd")
+	b.handleCallback(cq)
+}
+
+func TestHandleCallback_WGOn_Success(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	b := newBotForTest(mockWG)
+
+	cq := makeCallback(100, 200, "wg_on")
+	b.handleCallback(cq)
+}
+
+func TestHandleCallback_WGOff_Success(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	b := newBotForTest(mockWG)
+
+	cq := makeCallback(100, 200, "wg_off")
+	b.handleCallback(cq)
+}
+
+func TestHandleCallback_WGStatus(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	b := newBotForTest(mockWG)
+
+	cq := makeCallback(100, 200, "wg_status")
+	b.handleCallback(cq)
+}
+
+func TestHandleCallback_WOL(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	b := newBotForTest(mockWG)
+
+	cq := makeCallback(100, 200, "wol_server")
+	b.handleCallback(cq)
+}
+
+func TestHandleCallback_Extend(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	b := newBotForTest(mockWG)
+
+	// Таймер должен быть активен для extend
+	b.sched.Start(1 * time.Hour)
+	defer b.sched.Stop()
+
+	cq := makeCallback(100, 200, "scheduler_extend")
+	b.handleCallback(cq)
+}
+
+func TestHandleCallback_WGOn_Failure(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{
+		out: []byte("error"),
+		err: errTest,
+	})
+	b := newBotForTest(mockWG)
+
+	cq := makeCallback(100, 200, "wg_on")
+	b.handleCallback(cq)
+}
+
+// -- helpers --
+
+type mockExec struct {
+	out   []byte
+	err   error
+}
+
+var errTest = &execExitError{}
+
+type execExitError struct{}
+
+func (e *execExitError) Error() string { return "exit status 1" }
+
+func (m *mockExec) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
+	if m.err != nil {
+		return m.out, m.err
+	}
+	return m.out, nil
+}
 
 func TestFormatStatus_Err(t *testing.T) {
 	got := formatStatus(nil, assertError("test error"), nil)
@@ -70,7 +223,6 @@ func TestFormatStatus_RunningNoTimer(t *testing.T) {
 	if !contains(got, "wg99") {
 		t.Errorf("expected wg99, got: %s", got)
 	}
-	// Timer not active — no timer line expected
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────┘

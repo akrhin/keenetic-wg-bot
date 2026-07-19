@@ -19,9 +19,16 @@ import (
 	"github.com/akrhin/keenetic-wg-bot/internal/wol"
 )
 
+// APIClient — интерфейс для Telegram API (для тестирования).
+type APIClient interface {
+	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+	Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error)
+	GetUpdatesChan(u tgbotapi.UpdateConfig) tgbotapi.UpdatesChannel
+}
+
 // Bot — основной объект бота.
 type Bot struct {
-	api   *tgbotapi.BotAPI
+	api   APIClient
 	cfg   *config.Config
 	wg    *wireguard.Manager
 	sched *scheduler.Timer
@@ -32,9 +39,9 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config) *Bot {
 	wgMgr := wireguard.New(cfg.WireGuard.Interface)
 
 	b := &Bot{
-		api: api,
-		cfg: cfg,
-		wg:  wgMgr,
+		api:   api,
+		cfg:   cfg,
+		wg:    wgMgr,
 	}
 
 	// Таймер автоотключения
@@ -59,6 +66,16 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config) *Bot {
 	})
 
 	return b
+}
+
+// NewWithClient создаёт бота с произвольным APIClient (для тестов).
+func NewWithClient(api APIClient, cfg *config.Config, wg *wireguard.Manager, sched *scheduler.Timer) *Bot {
+	return &Bot{
+		api:   api,
+		cfg:   cfg,
+		wg:    wg,
+		sched: sched,
+	}
 }
 
 // Run запускает бесконечный цикл polling'а.
