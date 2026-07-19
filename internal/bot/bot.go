@@ -39,9 +39,9 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config) *Bot {
 	wgMgr := wireguard.New(cfg.WireGuard.Interface)
 
 	b := &Bot{
-		api:   api,
-		cfg:   cfg,
-		wg:    wgMgr,
+		api: api,
+		cfg: cfg,
+		wg:  wgMgr,
 	}
 
 	// Таймер автоотключения

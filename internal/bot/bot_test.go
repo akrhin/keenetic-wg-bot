@@ -62,7 +62,7 @@ func makeCallback(chatID, userID int64, data string) *tgbotapi.CallbackQuery {
 		ID:   "cq_test",
 		From: &tgbotapi.User{ID: userID},
 		Message: &tgbotapi.Message{
-			Chat: &tgbotapi.Chat{ID: chatID},
+			Chat:      &tgbotapi.Chat{ID: chatID},
 			MessageID: 42,
 		},
 		Data: data,
@@ -145,8 +145,8 @@ func TestHandleCallback_WGOn_Failure(t *testing.T) {
 // -- helpers --
 
 type mockExec struct {
-	out   []byte
-	err   error
+	out []byte
+	err error
 }
 
 var errTest = &execExitError{}

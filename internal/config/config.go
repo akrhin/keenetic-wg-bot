@@ -14,13 +14,13 @@ import (
 
 // Config — корневая структура конфигурации.
 type Config struct {
-	Telegram      TelegramConfig      `toml:"telegram"`
-	WireGuard     WireGuardConfig     `toml:"wireguard"`
-	WOL           WOLConfig           `toml:"wol"`
-	Scheduler     SchedulerConfig     `toml:"scheduler"`
-	Network       NetworkConfig       `toml:"network"`
-	Proxy         ProxyConfig         `toml:"proxy"`
-	CommandTimeout int                `toml:"command_timeout"`
+	Telegram       TelegramConfig  `toml:"telegram"`
+	WireGuard      WireGuardConfig `toml:"wireguard"`
+	WOL            WOLConfig       `toml:"wol"`
+	Scheduler      SchedulerConfig `toml:"scheduler"`
+	Network        NetworkConfig   `toml:"network"`
+	Proxy          ProxyConfig     `toml:"proxy"`
+	CommandTimeout int             `toml:"command_timeout"`
 }
 
 type NetworkConfig struct {
