@@ -4,7 +4,11 @@
 /wg-bot-mipsle
 wg-bot.exe
 wg-bot-*
-!cmd/**/main.go
+
+# But keep source directories
+!cmd/
+!cmd/wg-bot/
+!cmd/wg-bot/main.go
 
 # Build output
 dist/
