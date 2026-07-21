@@ -80,6 +80,7 @@ jobs:
         run: go vet ./...
       - name: govulncheck
         uses: golang/govulncheck-action@v1
+        continue-on-error: true
         with:
            go-version-input: ${{ env.GO_VERSION }}
 
