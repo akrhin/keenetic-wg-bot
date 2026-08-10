@@ -138,7 +138,7 @@ info "Using $DL for downloads"
 info "Updating package lists..."
 opkg update 2>/dev/null || warn "opkg update failed, continuing..."
 
-for pkg in wireguard-tools wireguard-go; do
+for pkg in wireguard-tools wireguard-go tzdata; do
 	if ! opkg list-installed 2>/dev/null | grep -q "^${pkg} "; then
 		info "Installing $pkg..."
 		opkg install "$pkg" || warn "Failed to install $pkg"
@@ -236,6 +236,9 @@ if [ ! -f "$INIT_SCRIPT" ]; then
 START=99
 
 CMD="/opt/bin/wg-bot"
+
+# Таймзона: Go-демоны без TZ показывают UTC. По умолчанию — Москва.
+export TZ="${TZ:-Europe/Moscow}"
 
 case "$1" in
 	start)   $CMD start ;;

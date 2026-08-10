@@ -26,6 +26,8 @@ start() {
 	fi
 	ensure_logdir
 	echo "Starting wg-bot..."
+	# Таймзона: без TZ Go-демон показывает UTC.
+	export TZ="${TZ:-Europe/Moscow}"
 	nohup "$BIN" -config "$CONFIG" >> "$LOGFILE" 2>&1 &
 	echo $! > "$PIDFILE"
 	sleep 1
