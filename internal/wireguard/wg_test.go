@@ -103,6 +103,40 @@ func TestShow_DeviceNotFound(t *testing.T) {
 	}
 }
 
+// BusyBox wg-tools (Keenetic) пишет "Unable to access interface ...: No such device".
+func TestShow_DeviceNotFound_BusyBox(t *testing.T) {
+	mgr := NewWithExecutor("wg0",
+		&mockExec{},
+		&mockExec{
+			out:   []byte{},
+			err:   errors.New("exit status 1"),
+			stder: []byte("Unable to access interface wg0: No such device"),
+		},
+	)
+	s, err := mgr.Show(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Running {
+		t.Error("expected running=false for missing device")
+	}
+}
+
+func TestShow_RealErrorStillFails(t *testing.T) {
+	// Другие ошибки wg (не "нет интерфейса") должны оставаться ошибками.
+	mgr := NewWithExecutor("wg0",
+		&mockExec{},
+		&mockExec{
+			out:   []byte{},
+			err:   errors.New("exit status 1"),
+			stder: []byte("Operation not permitted"),
+		},
+	)
+	if _, err := mgr.Show(context.Background()); err == nil {
+		t.Fatal("expected error for non-missing-interface failure")
+	}
+}
+
 func TestUp_Success(t *testing.T) {
 	mgr := NewWithExecutor("wg0",
 		&mockExec{},

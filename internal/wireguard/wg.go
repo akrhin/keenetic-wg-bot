@@ -95,14 +95,33 @@ func (m *Manager) Down(ctx context.Context) error {
 func (m *Manager) Show(ctx context.Context) (*Status, error) {
 	out, err := m.combExec.Run(ctx, "wg", "show", m.iface, "dump")
 	if err != nil {
-		// CombinedOutput — stderr merged into out, exitErr.Stderr is empty
-		// So we check out for "Cannot find" / "does not exist" strings
-		if strings.Contains(string(out), "Cannot find") || strings.Contains(string(out), "does not exist") {
+		// CombinedOutput — stderr merged into out, exitErr.Stderr is empty.
+		// Разные сборки wg по-разному сообщают об отсутствии интерфейса
+		// (wireguard-tools, BusyBox wg-tools на Keenetic и т.д.) — перекрываем всё.
+		if isMissingInterface(string(out)) {
 			return &Status{Running: false, Interface: m.iface}, nil
 		}
 		return nil, fmt.Errorf("wg show %s: %w\n%s", m.iface, err, string(out))
 	}
 	return parseDump(m.iface, string(out))
+}
+
+// isMissingInterface определяет, что wg сообщил об отсутствии интерфейса.
+func isMissingInterface(out string) bool {
+	lower := strings.ToLower(out)
+	for _, p := range []string{
+		"cannot find",
+		"does not exist",
+		"not exist",
+		"no such device",
+		"unable to access interface",
+		"unknown device",
+	} {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseDump разбирает вывод `wg show <iface> dump`.
