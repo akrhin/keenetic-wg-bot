@@ -36,3 +36,6 @@ Thumbs.db
 *.test
 *.out
 vendor/
+
+# Cursor backlog — локальные заметки ассистента (правила .mdc остаются в git)
+.cursor/backlog/*.json

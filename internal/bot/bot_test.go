@@ -2,7 +2,9 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 type mockAPI struct {
 	sendFn    func(c tgbotapi.Chattable) (tgbotapi.Message, error)
 	requestFn func(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error)
+	updatesFn func(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error)
 }
 
 func (m *mockAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
@@ -33,12 +36,20 @@ func (m *mockAPI) Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
 	return &tgbotapi.APIResponse{}, nil
 }
 
-func (m *mockAPI) GetUpdatesChan(u tgbotapi.UpdateConfig) tgbotapi.UpdatesChannel {
-	return make(tgbotapi.UpdatesChannel)
+func (m *mockAPI) GetUpdates(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+	if m.updatesFn != nil {
+		return m.updatesFn(u)
+	}
+	return nil, nil
 }
 
 func newBotForTest(wg *wireguard.Manager) *Bot {
-	cfg := &config.Config{
+	sched := scheduler.New(func() { log.Println("timer fired (test)") })
+	return NewWithClient(&mockAPI{}, testConfig(), wg, sched)
+}
+
+func testConfig() *config.Config {
+	return &config.Config{
 		Telegram: config.TelegramConfig{
 			BotToken: "test:token",
 			AllowedUsers: []config.AllowedUser{
@@ -53,8 +64,6 @@ func newBotForTest(wg *wireguard.Manager) *Bot {
 		},
 		Scheduler: config.SchedulerConfig{AutoOffMinutes: 30},
 	}
-	sched := scheduler.New(func() { log.Println("timer fired (test)") })
-	return NewWithClient(&mockAPI{}, cfg, wg, sched)
 }
 
 func makeCallback(chatID, userID int64, data string) *tgbotapi.CallbackQuery {
@@ -140,6 +149,99 @@ func TestHandleCallback_WGOn_Failure(t *testing.T) {
 
 	cq := makeCallback(100, 200, "wg_on")
 	b.handleCallback(context.Background(), cq)
+}
+
+func TestRedact(t *testing.T) {
+	cfg := &config.Config{Telegram: config.TelegramConfig{BotToken: "123:secret"}}
+	err := fmt.Errorf("Post \"https://api.telegram.org/bot123:secret/getUpdates\": EOF")
+
+	got := redact(cfg, err)
+	if contains(got, "secret") {
+		t.Fatalf("token leaked into redacted message: %s", got)
+	}
+	if !contains(got, "***") {
+		t.Fatalf("expected *** placeholder, got: %s", got)
+	}
+
+	if got := redact(nil, nil); got != "" {
+		t.Fatalf("expected empty string for nil error, got: %q", got)
+	}
+	if got := redact(&config.Config{}, fmt.Errorf("no token here")); got != "no token here" {
+		t.Fatalf("unexpected redaction without token: %q", got)
+	}
+}
+
+func TestRun_ProcessesUpdatesAndStops(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	api := &mockAPI{
+		updatesFn: func(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+			return []tgbotapi.Update{
+				{UpdateID: 1, Message: &tgbotapi.Message{
+					Chat: &tgbotapi.Chat{ID: 100},
+					From: &tgbotapi.User{ID: 200},
+					Text: "статус",
+				}},
+			}, nil
+		},
+	}
+	b := NewWithClient(api, testConfig(), mockWG, scheduler.New(func() {}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	if err := b.Run(ctx); err != context.Canceled && err != context.DeadlineExceeded {
+		t.Fatalf("Run returned unexpected error: %v", err)
+	}
+}
+
+func TestRun_DoesNotRetryPanic(t *testing.T) {
+	// Проверяем, что паника в обработчике не убивает polling-цикл.
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{})
+	api := &mockAPI{
+		updatesFn: func(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+			return []tgbotapi.Update{{UpdateID: 1}}, nil
+		},
+	}
+	b := NewWithClient(api, testConfig(), mockWG, scheduler.New(func() {}))
+	// Update без Message и CallbackQuery — handleUpdate тихо выходит.
+	// Запускаем и проверяем, что Run доживает до отмены контекста.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := b.Run(ctx); err != context.Canceled && err != context.DeadlineExceeded {
+		t.Fatalf("Run returned unexpected error: %v", err)
+	}
+}
+
+func TestRun_RebuildAfterErrors(t *testing.T) {
+	oldMax, oldStep := maxPollErrors, pollBackoffStep
+	maxPollErrors, pollBackoffStep = 2, time.Millisecond
+	defer func() { maxPollErrors, pollBackoffStep = oldMax, oldStep }()
+
+	api := &mockAPI{
+		updatesFn: func(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+			return nil, fmt.Errorf("Post \"https://api.telegram.org/botSECRET/getUpdates\": EOF")
+		},
+	}
+	b := NewWithClient(api, testConfig(), wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{}), scheduler.New(func() {}))
+
+	var mu sync.Mutex
+	rebuildCalled := 0
+	b.rebuild = func() error {
+		mu.Lock()
+		rebuildCalled++
+		mu.Unlock()
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_ = b.Run(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if rebuildCalled == 0 {
+		t.Fatal("rebuild was not called after consecutive getUpdates errors")
+	}
 }
 
 // -- helpers --

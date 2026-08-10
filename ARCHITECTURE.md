@@ -10,7 +10,7 @@
 
 | Компонент | Технология | Обоснование |
 |-----------|------------|-------------|
-| Язык | Go 1.25+ | Один бинарник, кросс-компиляция, ноль зависимостей на роутере |
+| Язык | Go 1.26+ | Один бинарник, кросс-компиляция, ноль зависимостей на роутере |
 | Telegram API | `go-telegram-bot-api/v5` | Pure Go, стандарт де-факто |
 | Конфиг | TOML (`BurntSushi/toml`) | Человекочитаемый, с комментариями, строгая типизация |
 | Прокси | `golang.org/x/net/proxy` | SOCKS5 из стандартного extended-пакета |
@@ -49,7 +49,7 @@ keenetic-wg-bot/
 - `telegram` — bot_token, белый список `{chat_id, user_id}`
 - `wireguard` — имя интерфейса (по умолчанию `wg0`), путь к `.conf`
 - `wol` — список хостов `{name, mac, broadcast}`
-- `scheduler` — `auto_off_minutes` (по умолчанию 30), `state_file`
+- `scheduler` — `auto_off_minutes` (по умолчанию 30)
 - `proxy` — опциональный SOCKS5: `enabled, url, username, password`
 - `network` — `prefer_ipv6` (IPv6-first resolution)
 
@@ -121,8 +121,11 @@ HTTP-клиент с опциональным SOCKS5-прокси и IPv6-first 
 
 **IPv6-first dialer:** обёртка `proxy.ContextDialer`, которая резолвит AAAA-записи раньше A. Используется и как самостоятельный диалектор, и как `base` для SOCKS5.
 
-**Таймауты:**
-- `ResponseHeaderTimeout`: 75 с
+**Таймауты (критично для устойчивости long-polling):**
+- DNS-резолв: 5 с (не виснет на мёртвом локальном DNS)
+- Установка соединения: 15 с
+- `ResponseHeaderTimeout`: 75 с (запас над long-poll 60 с)
+- `IdleConnTimeout`: 90 с — «протухшие» keep-alive не живут вечно
 - Общий `Timeout`: 90 с
 
 ### 6. Bot (`internal/bot`)
@@ -148,7 +151,13 @@ HTTP-клиент с опциональным SOCKS5-прокси и IPv6-first 
 - Проверка `IsAllowed()` на каждое сообщение и callback
 - При отказе — `⛔ Доступ запрещён`
 
-**Polling:** `GetUpdatesChan` с таймаутом 60 с, в цикле с контекстом.
+**Polling:** собственный устойчивый цикл (не `GetUpdatesChan`) с long-polling 60 с.
+
+Self-healing:
+- N ошибок подряд → пересоздание HTTP-транспорта (закрытие «протухших» idle-соединений) без рестарта процесса;
+- backoff с ростом числа ошибок (до 30 с), пауза не блокирует отмену по контексту;
+- `recover` вокруг обработчиков — паника не убивает цикл;
+- токен маскируется (`***`) во всех ошибках и логах.
 
 ### 7. Main (`cmd/wg-bot`)
 

@@ -8,30 +8,53 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/akrhin/keenetic-wg-bot/internal/config"
+	"github.com/akrhin/keenetic-wg-bot/internal/proxy"
 	"github.com/akrhin/keenetic-wg-bot/internal/scheduler"
 	"github.com/akrhin/keenetic-wg-bot/internal/wireguard"
 	"github.com/akrhin/keenetic-wg-bot/internal/wol"
 )
 
+// Настройки устойчивого polling.
+// Вынесены в переменные (а не константы), чтобы тесты могли их уменьшать.
+var (
+	// maxPollErrors — сколько ошибок getUpdates подряд до пересоздания транспорта.
+	maxPollErrors = 3
+	// pollBackoffStep — базовый шаг паузы между ошибками (растёт × errCount).
+	pollBackoffStep = 3 * time.Second
+	// pollBackoffMax — верхняя граница паузы между ошибками.
+	pollBackoffMax = 30 * time.Second
+)
+
+// pollTimeout — таймаут long-polling в секундах.
+// Telegram держит запрос открытым до этого срока и отвечает пустым списком.
+const pollTimeout = 60
+
 // APIClient — интерфейс для Telegram API (для тестирования).
 type APIClient interface {
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
 	Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error)
-	GetUpdatesChan(u tgbotapi.UpdateConfig) tgbotapi.UpdatesChannel
+	GetUpdates(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error)
 }
 
 // Bot — основной объект бота.
 type Bot struct {
+	apiMu sync.RWMutex // защищает api и его Client (таймер-горутина vs Run)
 	api   APIClient
 	cfg   *config.Config
 	wg    *wireguard.Manager
 	sched *scheduler.Timer
+
+	// rebuild пересоздаёт HTTP-транспорт Telegram API (self-healing при сбое сети).
+	// nil в тестах — тогда пересоздание отключено.
+	rebuild func() error
 }
 
 // New создаёт нового бота.
@@ -42,6 +65,34 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config) *Bot {
 		api: api,
 		cfg: cfg,
 		wg:  wgMgr,
+	}
+
+	// Self-healing: пересоздаём только HTTP-клиент (транспорт), не трогая
+	// объект BotAPI — токен и offset сохраняются, повторный getMe не нужен.
+	b.rebuild = func() error {
+		b.apiMu.Lock()
+		defer b.apiMu.Unlock()
+
+		bapi, ok := b.api.(*tgbotapi.BotAPI)
+		if !ok {
+			return nil // тестовый клиент — пересоздание не требуется
+		}
+
+		client, err := proxy.NewHTTPClient(cfg)
+		if err != nil {
+			return err
+		}
+
+		// Закрываем «протухшие» idle-соединения старого транспорта,
+		// чтобы они не висели в пуле и не переиспользовались.
+		if old, ok := bapi.Client.(*http.Client); ok {
+			if tr, ok := old.Transport.(interface{ CloseIdleConnections() }); ok {
+				tr.CloseIdleConnections()
+			}
+		}
+
+		bapi.Client = client
+		return nil
 	}
 
 	// Таймер автоотключения
@@ -58,7 +109,7 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config) *Bot {
 		msg := "⏰ Автоотключение: WireGuard выключен"
 		for _, u := range cfg.Telegram.AllowedUsers {
 			m := tgbotapi.NewMessage(u.ChatID, msg)
-			if _, err := b.api.Send(m); err != nil {
+			if _, err := b.send(m); err != nil {
 				log.Printf("[bot] notify auto-off: %v", err)
 			}
 		}
@@ -78,20 +129,106 @@ func NewWithClient(api APIClient, cfg *config.Config, wg *wireguard.Manager, sch
 	}
 }
 
-// Run запускает бесконечный цикл polling'а.
+// send — потокобезопасная обёртка над api.Send.
+func (b *Bot) send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	b.apiMu.RLock()
+	defer b.apiMu.RUnlock()
+	return b.api.Send(c)
+}
+
+// request — потокобезопасная обёртка над api.Request.
+func (b *Bot) request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	b.apiMu.RLock()
+	defer b.apiMu.RUnlock()
+	return b.api.Request(c)
+}
+
+// getUpdates — потокобезопасная обёртка над api.GetUpdates.
+func (b *Bot) getUpdates(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+	b.apiMu.RLock()
+	defer b.apiMu.RUnlock()
+	return b.api.GetUpdates(u)
+}
+
+// Run запускает устойчивый цикл long-polling.
+//
+// В отличие от tgbotapi.GetUpdatesChan:
+//   - не печатает URL с токеном в логи при ошибках;
+//   - сам восстанавливается после глюков сети (backoff + пересоздание транспорта);
+//   - паника в обработчике не убивает цикл.
 func (b *Bot) Run(ctx context.Context) error {
 	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	updates := b.api.GetUpdatesChan(u)
+	u.Timeout = pollTimeout
 
+	var errCount int
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case update := <-updates:
-			b.handleUpdate(ctx, update)
+		default:
+		}
+
+		updates, err := b.getUpdates(u)
+		if err != nil {
+			errCount++
+			log.Printf("[bot] getUpdates error (attempt %d): %s", errCount, redact(b.cfg, err))
+
+			// Self-healing: N ошибок подряд — пересоздаём транспорт.
+			if b.rebuild != nil && errCount >= maxPollErrors {
+				log.Printf("[bot] %d consecutive getUpdates errors, rebuilding transport...", errCount)
+				if rerr := b.rebuild(); rerr != nil {
+					log.Printf("[bot] rebuild transport failed: %s", redact(b.cfg, rerr))
+				} else {
+					log.Printf("[bot] transport rebuilt, resetting error counter")
+					errCount = 0
+				}
+			}
+
+			// Backoff: растёт с числом ошибок, но не бесконечно.
+			d := time.Duration(errCount) * pollBackoffStep
+			if d > pollBackoffMax {
+				d = pollBackoffMax
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(d):
+			}
+			continue
+		}
+
+		errCount = 0
+		for _, update := range updates {
+			if update.UpdateID >= u.Offset {
+				u.Offset = update.UpdateID + 1
+				safeHandleUpdate(ctx, b, update)
+			}
 		}
 	}
+}
+
+// redact возвращает текст ошибки с замаскированным токеном бота.
+// Ошибки Telegram API содержат полный URL вида .../bot<TOKEN>/method —
+// без маскировки токен утекал бы в логи при каждом сбое сети.
+func redact(cfg *config.Config, err error) string {
+	if err == nil {
+		return ""
+	}
+	if cfg == nil || cfg.Telegram.BotToken == "" {
+		return err.Error()
+	}
+	return strings.ReplaceAll(err.Error(), cfg.Telegram.BotToken, "***")
+}
+
+// safeHandleUpdate вызывает handleUpdate, защищая polling-цикл от паник.
+func safeHandleUpdate(ctx context.Context, b *Bot, update tgbotapi.Update) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[bot] panic in handleUpdate recovered: %v", r)
+		}
+	}()
+	b.handleUpdate(ctx, update)
 }
 
 // Shutdown выполняет graceful shutdown: останавливает таймер и опускает WG.
@@ -122,7 +259,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 	if !b.cfg.Telegram.IsAllowed(update.Message.Chat.ID, update.Message.From.ID) {
 		log.Printf("[bot] access denied: chat=%d user=%d", update.Message.Chat.ID, update.Message.From.ID)
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "⛔ Доступ запрещён")
-		_, _ = b.api.Send(msg)
+		_, _ = b.send(msg)
 		return
 	}
 
@@ -140,7 +277,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 
 // cb — короткий вызов callback answer (wraps Request).
 func (b *Bot) cb(cq *tgbotapi.CallbackQuery, text string) {
-	_, _ = b.api.Request(tgbotapi.NewCallback(cq.ID, text))
+	_, _ = b.request(tgbotapi.NewCallback(cq.ID, text))
 }
 
 func (b *Bot) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQuery) {
@@ -193,7 +330,7 @@ func (b *Bot) sendMainMenu(chatID int64) {
 	msg.ReplyMarkup = kb
 	msg.DisableWebPagePreview = true
 
-	if _, err := b.api.Send(msg); err != nil {
+	if _, err := b.send(msg); err != nil {
 		log.Printf("[bot] send menu: %v", err)
 	}
 }
@@ -209,7 +346,7 @@ func (b *Bot) sendStatus(chatID int64) {
 	msg.ParseMode = "Markdown"
 	msg.DisableWebPagePreview = true
 
-	_, _ = b.api.Send(msg)
+	_, _ = b.send(msg)
 }
 
 func (b *Bot) cmdOn(cq *tgbotapi.CallbackQuery, ctx context.Context) {
@@ -232,7 +369,7 @@ func (b *Bot) cmdOn(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = cq.Message.ReplyMarkup
-	_, _ = b.api.Send(edit)
+	_, _ = b.send(edit)
 }
 
 func (b *Bot) cmdOff(cq *tgbotapi.CallbackQuery, ctx context.Context) {
@@ -252,7 +389,7 @@ func (b *Bot) cmdOff(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = cq.Message.ReplyMarkup
-	_, _ = b.api.Send(edit)
+	_, _ = b.send(edit)
 }
 
 func (b *Bot) cmdStatus(cq *tgbotapi.CallbackQuery, ctx context.Context) {
@@ -263,7 +400,7 @@ func (b *Bot) cmdStatus(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = cq.Message.ReplyMarkup
-	_, _ = b.api.Send(edit)
+	_, _ = b.send(edit)
 }
 
 func (b *Bot) cmdExtend(cq *tgbotapi.CallbackQuery, ctx context.Context) {
@@ -275,7 +412,7 @@ func (b *Bot) cmdExtend(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 		edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 		edit.ParseMode = "Markdown"
 		edit.ReplyMarkup = cq.Message.ReplyMarkup
-		_, _ = b.api.Send(edit)
+		_, _ = b.send(edit)
 		return
 	}
 
@@ -291,7 +428,7 @@ func (b *Bot) cmdExtend(cq *tgbotapi.CallbackQuery, ctx context.Context) {
 	edit := tgbotapi.NewEditMessageText(cq.Message.Chat.ID, cq.Message.MessageID, text)
 	edit.ParseMode = "Markdown"
 	edit.ReplyMarkup = cq.Message.ReplyMarkup
-	_, _ = b.api.Send(edit)
+	_, _ = b.send(edit)
 }
 
 func (b *Bot) cmdWOL(cq *tgbotapi.CallbackQuery, ctx context.Context) {

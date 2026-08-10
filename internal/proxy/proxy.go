@@ -1,4 +1,12 @@
 // Package proxy — SOCKS5-прокси для Telegram API.
+//
+// HTTP-клиент настраивается с жёсткими таймаутами:
+//   - резолв DNS — не более 5с на запрос (не виснет на мёртвом 127.0.0.1:53);
+//   - установка TCP-соединения — не более 15с;
+//   - idle keep-alive соединения выживают максимум 90с и не копятся.
+//
+// Это критично для long-polling: при глюке сети соединения «протухают»,
+// и без этих таймаутов запрос getUpdates висел бы бесконечно.
 package proxy
 
 import (
@@ -14,20 +22,72 @@ import (
 	"github.com/akrhin/keenetic-wg-bot/internal/config"
 )
 
+const (
+	// dnsTimeout — таймаут одного DNS-запроса (по умолчанию Go может висеть дольше).
+	dnsTimeout = 5 * time.Second
+	// dialTimeout — таймаут установки TCP-соединения.
+	dialTimeout = 15 * time.Second
+	// idleConnTimeout — сколько живёт бездействующее keep-alive соединение.
+	idleConnTimeout = 90 * time.Second
+	// responseHeaderTimeout — верхняя граница ожидания заголовков ответа.
+	// long-polling держит запрос открытым до 60с, 75с даёт запас.
+	responseHeaderTimeout = 75 * time.Second
+	// clientTimeout — общий таймаут HTTP-запроса.
+	clientTimeout = 90 * time.Second
+)
+
+// newResolver возвращает резолвер с таймаутом на каждый DNS-запрос.
+// Прямой системный резолвер (net.DefaultResolver) не имеет жёсткого таймаута:
+// при зависшем локальном DNS (dnsmasq на роутере) он блокировал весь dial.
+func newResolver() *net.Resolver {
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: dnsTimeout}
+			return d.DialContext(ctx, network, address)
+		},
+	}
+}
+
+// newDialer возвращает net.Dialer с таймаутами и кастомным резолвером.
+func newDialer(resolver *net.Resolver) *net.Dialer {
+	return &net.Dialer{
+		Timeout:   dialTimeout,
+		KeepAlive: 30 * time.Second,
+		Resolver:  resolver,
+	}
+}
+
+// newTransport собирает http.Transport с управляемым пулом соединений.
+func newTransport(dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
+	return &http.Transport{
+		DialContext:           dialContext,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		IdleConnTimeout:       idleConnTimeout,
+		MaxIdleConns:          5,
+		MaxIdleConnsPerHost:   2,
+		ForceAttemptHTTP2:     false,
+	}
+}
+
 // NewHTTPClient creates http.Client with optional SOCKS5 proxy and/or IPv6-first dial.
 func NewHTTPClient(cfg *config.Config) (*http.Client, error) {
+	resolver := newResolver()
+	dialer := newDialer(resolver)
+
 	// Без прокси — обычный клиент (с опциональным IPv6-first)
 	if !cfg.Proxy.IsEnabled() {
 		if cfg.Network.PreferIPv6 {
+			d := &ipv6FirstDialer{next: dialer, resolver: resolver}
 			return &http.Client{
-				Transport: &http.Transport{
-					DialContext:           (&ipv6FirstDialer{}).DialContext,
-					ResponseHeaderTimeout: 75 * time.Second,
-				},
-				Timeout: 90 * time.Second,
+				Transport: newTransport(d.DialContext),
+				Timeout:   clientTimeout,
 			}, nil
 		}
-		return &http.Client{Timeout: 90 * time.Second}, nil
+		return &http.Client{
+			Transport: newTransport(dialer.DialContext),
+			Timeout:   clientTimeout,
+		}, nil
 	}
 
 	// Прокси настроен и включён
@@ -44,34 +104,33 @@ func NewHTTPClient(cfg *config.Config) (*http.Client, error) {
 		}
 	}
 
-	// Базовый диалектор для SOCKS5
-	var base proxy.Dialer = proxy.Direct
+	// Базовый диалектор для SOCKS5 — он подключается к самому прокси,
+	// поэтому тоже обязан иметь таймаут на резолв и соединение.
+	var base proxy.Dialer = dialer
 	if cfg.Network.PreferIPv6 {
-		base = &ipv6FirstDialer{next: proxy.Direct}
+		base = &ipv6FirstDialer{next: dialer, resolver: resolver}
 	}
 
-	dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, auth, base)
+	socksDialer, err := proxy.SOCKS5("tcp", proxyURL.Host, auth, base)
 	if err != nil {
 		return nil, fmt.Errorf("proxy socks5 dialer: %w", err)
 	}
 
-	ctxDialer, ok := dialer.(proxy.ContextDialer)
+	ctxDialer, ok := socksDialer.(proxy.ContextDialer)
 	if !ok {
 		return nil, fmt.Errorf("proxy socks5 dialer does not support context dialing")
 	}
 
 	return &http.Client{
-		Transport: &http.Transport{
-			DialContext:           ctxDialer.DialContext,
-			ResponseHeaderTimeout: 75 * time.Second,
-		},
-		Timeout: 90 * time.Second,
+		Transport: newTransport(ctxDialer.DialContext),
+		Timeout:   clientTimeout,
 	}, nil
 }
 
 // ipv6FirstDialer — обёртка, резолвит AAAA (IPv6) раньше A (IPv4).
 type ipv6FirstDialer struct {
-	next proxy.Dialer
+	next     proxy.Dialer
+	resolver *net.Resolver
 }
 
 func (d *ipv6FirstDialer) Dial(network, addr string) (net.Conn, error) {
@@ -84,7 +143,7 @@ func (d *ipv6FirstDialer) DialContext(ctx context.Context, network, addr string)
 		return d.resolveAndDial(ctx, network, addr)
 	}
 
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	ips, err := d.resolver.LookupIPAddr(ctx, host)
 	if err != nil || len(ips) == 0 {
 		return d.resolveAndDial(ctx, network, addr)
 	}
