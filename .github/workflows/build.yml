@@ -77,14 +77,18 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: false # govulncheck-action делает собственный setup-go — без кеша, чтобы не было tar-конфликта
       - name: go vet
         run: go vet ./...
-      # govulncheck-action@v1 падает на tar-ресторе кеша Go-модулей
-      # ("Cannot open: File exists") и сидит на Node 20 — запускаем напрямую.
+      # govulncheck-action сам ставит Go и сканирует; отключаем повторный
+      # checkout и кеш, чтобы не конфликтовать с setup-go выше ("Cannot open: File exists").
       - name: govulncheck
+        uses: golang/govulncheck-action@v1
         continue-on-error: true
-        run: |
-          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        with:
+          go-version-input: ${{ env.GO_VERSION }}
+          repo-checkout: false
+          cache: false
 
   test:
     name: Test
