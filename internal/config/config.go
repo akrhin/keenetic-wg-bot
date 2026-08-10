@@ -25,6 +25,10 @@ type Config struct {
 
 type NetworkConfig struct {
 	PreferIPv6 bool `toml:"prefer_ipv6"`
+	// PollTimeout — таймаут long-polling Telegram API (сек). Чем короче,
+	// тем реже сеть/прокси успевает оборвать idle-соединение (типичный
+	// обрыв ~60с при poll=60). Дефолт 30с.
+	PollTimeout int `toml:"poll_timeout"`
 }
 
 type TelegramConfig struct {
@@ -101,6 +105,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.CommandTimeout <= 0 {
 		cfg.CommandTimeout = 45
+	}
+	if cfg.Network.PollTimeout <= 0 {
+		cfg.Network.PollTimeout = 30
+	}
+	if cfg.Network.PollTimeout > 60 {
+		cfg.Network.PollTimeout = 60
 	}
 
 	for _, h := range cfg.WOL.Hosts {

@@ -114,6 +114,67 @@ auto_off_minutes = 30
 	}
 }
 
+func TestLoad_PollTimeout_Default(t *testing.T) {
+	content := `
+[telegram]
+bot_token = "test:token"
+
+[[telegram.allowed_users]]
+chat_id = 123
+user_id = 456
+
+[wireguard]
+interface = "wg0"
+
+[wol]
+
+[scheduler]
+auto_off_minutes = 30
+`
+	path := writeTemp(t, content)
+	defer func() { _ = os.Remove(path) }()
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Network.PollTimeout != 30 {
+		t.Errorf("PollTimeout = %d, want default 30", cfg.Network.PollTimeout)
+	}
+}
+
+func TestLoad_PollTimeout_Custom(t *testing.T) {
+	content := `
+[telegram]
+bot_token = "test:token"
+
+[[telegram.allowed_users]]
+chat_id = 123
+user_id = 456
+
+[wireguard]
+interface = "wg0"
+
+[wol]
+
+[scheduler]
+auto_off_minutes = 30
+
+[network]
+poll_timeout = 15
+`
+	path := writeTemp(t, content)
+	defer func() { _ = os.Remove(path) }()
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Network.PollTimeout != 15 {
+		t.Errorf("PollTimeout = %d, want 15", cfg.Network.PollTimeout)
+	}
+}
+
 func TestLoad_WOL_InvalidBroadcast(t *testing.T) {
 	content := `
 [telegram]

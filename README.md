@@ -58,6 +58,7 @@ auto_off_minutes = 30
 
 [network]
 # prefer_ipv6 = true   # резолвить AAAA (IPv6) раньше A (IPv4)
+# poll_timeout = 30    # long-polling (сек); ниже порога обрыва idle-соединений сети
 
 [proxy]
 # enabled = true

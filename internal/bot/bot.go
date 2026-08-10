@@ -33,9 +33,11 @@ var (
 	pollBackoffMax = 30 * time.Second
 )
 
-// pollTimeout — таймаут long-polling в секундах.
-// Telegram держит запрос открытым до этого срока и отвечает пустым списком.
-const pollTimeout = 60
+// defaultPollTimeout — таймаут long-polling по умолчанию (сек), если в конфиге
+// network.poll_timeout не задан. 30с вместо 60с: многие прокси/сети рвут
+// idle-соединение примерно на 60-й секунде, из-за чего каждый poll заканчивался
+// EOF, а соединение — пересозданием.
+const defaultPollTimeout = 30
 
 // APIClient — интерфейс для Telegram API (для тестирования).
 type APIClient interface {
@@ -158,7 +160,7 @@ func (b *Bot) getUpdates(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
 //   - паника в обработчике не убивает цикл.
 func (b *Bot) Run(ctx context.Context) error {
 	u := tgbotapi.NewUpdate(0)
-	u.Timeout = pollTimeout
+	u.Timeout = b.pollTimeout()
 
 	var errCount int
 	for {
@@ -206,6 +208,14 @@ func (b *Bot) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// pollTimeout возвращает таймаут long-polling из конфига (или дефолт).
+func (b *Bot) pollTimeout() int {
+	if b.cfg != nil && b.cfg.Network.PollTimeout > 0 {
+		return b.cfg.Network.PollTimeout
+	}
+	return defaultPollTimeout
 }
 
 // redact возвращает текст ошибки с замаскированным токеном бота.

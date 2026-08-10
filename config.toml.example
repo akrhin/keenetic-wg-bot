@@ -19,3 +19,4 @@ auto_off_minutes = 30
 
 [network]
 # prefer_ipv6 = true   # резолвить AAAA (IPv6) раньше A (IPv4)
+# poll_timeout = 30    # таймаут long-polling (сек). 30 — оптимально для нестабильных прокси
