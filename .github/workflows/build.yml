@@ -149,9 +149,12 @@ jobs:
             wg-bot \
             install.sh \
             config.toml.example
+          sha256sum wg-bot-mipsle.tar.gz > wg-bot-mipsle.tar.gz.sha256
 
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
-          files: wg-bot-mipsle.tar.gz
+          files: |
+            wg-bot-mipsle.tar.gz
+            wg-bot-mipsle.tar.gz.sha256
           generate_release_notes: true

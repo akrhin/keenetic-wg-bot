@@ -15,12 +15,23 @@ import (
 // Config — корневая структура конфигурации.
 type Config struct {
 	Telegram       TelegramConfig  `toml:"telegram"`
+	Security       SecurityConfig  `toml:"security"`
 	WireGuard      WireGuardConfig `toml:"wireguard"`
 	WOL            WOLConfig       `toml:"wol"`
 	Scheduler      SchedulerConfig `toml:"scheduler"`
 	Network        NetworkConfig   `toml:"network"`
 	Proxy          ProxyConfig     `toml:"proxy"`
 	CommandTimeout int             `toml:"command_timeout"`
+}
+
+// SecurityConfig — защита от спама и перебора доступа.
+type SecurityConfig struct {
+	// CommandCooldownSeconds — мин. интервал между командами одного чата (сек).
+	CommandCooldownSeconds int `toml:"command_cooldown_seconds"`
+	// MaxFailedAttempts — сколько неудачных попыток доступа до бана чата.
+	MaxFailedAttempts int `toml:"max_failed_attempts"`
+	// BanSeconds — длительность бана после перебора доступа (сек).
+	BanSeconds int `toml:"ban_seconds"`
 }
 
 type NetworkConfig struct {
@@ -111,6 +122,15 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Network.PollTimeout > 60 {
 		cfg.Network.PollTimeout = 60
+	}
+	if cfg.Security.CommandCooldownSeconds <= 0 {
+		cfg.Security.CommandCooldownSeconds = 2
+	}
+	if cfg.Security.MaxFailedAttempts <= 0 {
+		cfg.Security.MaxFailedAttempts = 5
+	}
+	if cfg.Security.BanSeconds <= 0 {
+		cfg.Security.BanSeconds = 600
 	}
 
 	for _, h := range cfg.WOL.Hosts {

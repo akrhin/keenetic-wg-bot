@@ -74,3 +74,6 @@ make release      # test + build + tar.gz
 ☑️ README
 ☑️ AGENTS.md
 ☑️ ARCHITECTURE.md
+☑️ Security — rate-limit (cooldown + анти-брутфорс), секция `[security]`
+☑️ install.sh — SHA-256 проверка релиз-архива
+☑️ dependabot (Go-модули + Actions)

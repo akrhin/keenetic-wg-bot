@@ -244,6 +244,59 @@ func TestRun_RebuildAfterErrors(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_Cooldown(t *testing.T) {
+	rl := newRateLimiter()
+	if !rl.allow(1, 2*time.Second) {
+		t.Fatal("first command should be allowed")
+	}
+	if rl.allow(1, 2*time.Second) {
+		t.Fatal("command within cooldown should be denied")
+	}
+	if !rl.allow(2, 2*time.Second) {
+		t.Fatal("different chat should be allowed")
+	}
+}
+
+func TestRateLimiter_Ban(t *testing.T) {
+	rl := newRateLimiter()
+	var banned bool
+	for i := 0; i < 3; i++ {
+		banned = rl.recordFailure(1, 3, 60*time.Second)
+	}
+	if !banned {
+		t.Fatal("expected ban after max failures")
+	}
+	if !rl.banned(1) {
+		t.Fatal("expected chat 1 to be banned")
+	}
+	// Другой чат не забанен.
+	if rl.banned(2) {
+		t.Fatal("chat 2 should not be banned")
+	}
+}
+
+func TestRestoreAutoOff_WGRunning(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{out: []byte("key\tkey\t51820\t\t1234")})
+	sched := scheduler.New(func() {})
+	b := NewWithClient(&mockAPI{}, testConfig(), mockWG, sched)
+
+	b.restoreAutoOff()
+	if !sched.IsActive() {
+		t.Fatal("expected auto-off timer to be restored when WG is up")
+	}
+}
+
+func TestRestoreAutoOff_WGDown(t *testing.T) {
+	mockWG := wireguard.NewWithExecutor("wg0", &mockExec{}, &mockExec{out: []byte("")})
+	sched := scheduler.New(func() {})
+	b := NewWithClient(&mockAPI{}, testConfig(), mockWG, sched)
+
+	b.restoreAutoOff()
+	if sched.IsActive() {
+		t.Fatal("auto-off timer must NOT start when WG is down")
+	}
+}
+
 // -- helpers --
 
 type mockExec struct {

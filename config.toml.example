@@ -5,6 +5,11 @@ bot_token = "YOUR_BOT_TOKEN"
 chat_id = 123456789
 user_id = 987654321
 
+[security]
+# command_cooldown_seconds = 2   # мин. интервал между командами одного чата
+# max_failed_attempts = 5        # неудачных попыток доступа до бана чата
+# ban_seconds = 600              # длительность бана после перебора доступа
+
 [wireguard]
 interface = "wg0"
 config_path = "/opt/etc/wireguard/wg0.conf"

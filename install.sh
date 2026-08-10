@@ -71,6 +71,29 @@ verify_gzip() {
 	tar -tzf "$1" >/dev/null 2>&1
 }
 
+# Проверка целостности архива по SHA-256 из релиза.
+# Если .sha256 недоступен (старый релиз) — пропускаем с предупреждением.
+verify_sha256() {
+	local tgz="$1"
+	local sumfile="$2"
+	if [ ! -s "$sumfile" ]; then
+		warn "SHA-256 sum file missing, skipping verification"
+		return 0
+	fi
+	local expected actual
+	expected=$(awk '{print $1}' "$sumfile" 2>/dev/null)
+	actual=$(sha256sum "$tgz" 2>/dev/null | awk '{print $1}')
+	if [ -z "$expected" ] || [ -z "$actual" ]; then
+		error "Cannot compute SHA-256"
+		return 1
+	fi
+	if [ "$expected" != "$actual" ]; then
+		error "SHA-256 mismatch: expected $expected, got $actual"
+		return 1
+	fi
+	info "SHA-256 verified"
+}
+
 # ── Функция обновления бинарника ──────────────────────────────
 update_binary() {
 	local LATEST_URL
@@ -93,6 +116,13 @@ update_binary() {
 	if ! verify_gzip "$TMPTGZ"; then
 		error "Downloaded file is not a gzip archive. Size: $(wc -c < "$TMPTGZ") bytes."
 		error "File starts with (hex): $(head -c 8 "$TMPTGZ" | od -tx1 2>/dev/null | head -1)"
+		rm -rf "$WORKDIR"
+		return 1
+	fi
+
+	# Проверка целостности по SHA-256 из релиза
+	download_file "${LATEST_URL}.sha256" "${WORKDIR}/archive.sha256" >/dev/null 2>&1 || true
+	if ! verify_sha256 "$TMPTGZ" "${WORKDIR}/archive.sha256"; then
 		rm -rf "$WORKDIR"
 		return 1
 	fi
@@ -170,6 +200,13 @@ else
 	if ! verify_gzip "$TMPTGZ"; then
 		error "Downloaded file is not a gzip archive. Size: $(wc -c < "$TMPTGZ") bytes."
 		error "File starts with (hex): $(head -c 8 "$TMPTGZ" | od -tx1 2>/dev/null | head -1)"
+		rm -rf "$WORKDIR"
+		exit 1
+	fi
+
+	# Проверка целостности по SHA-256 из релиза
+	download_file "${LATEST_URL}.sha256" "${WORKDIR}/archive.sha256" >/dev/null 2>&1 || true
+	if ! verify_sha256 "$TMPTGZ" "${WORKDIR}/archive.sha256"; then
 		rm -rf "$WORKDIR"
 		exit 1
 	fi

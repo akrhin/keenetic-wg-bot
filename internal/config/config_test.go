@@ -201,6 +201,41 @@ broadcast = "not-an-ip"
 	}
 }
 
+func TestLoad_Security_Default(t *testing.T) {
+	content := `
+[telegram]
+bot_token = "test:token"
+
+[[telegram.allowed_users]]
+chat_id = 123
+user_id = 456
+
+[wireguard]
+interface = "wg0"
+
+[wol]
+
+[scheduler]
+auto_off_minutes = 30
+`
+	path := writeTemp(t, content)
+	defer func() { _ = os.Remove(path) }()
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Security.CommandCooldownSeconds != 2 {
+		t.Errorf("CommandCooldownSeconds = %d, want 2", cfg.Security.CommandCooldownSeconds)
+	}
+	if cfg.Security.MaxFailedAttempts != 5 {
+		t.Errorf("MaxFailedAttempts = %d, want 5", cfg.Security.MaxFailedAttempts)
+	}
+	if cfg.Security.BanSeconds != 600 {
+		t.Errorf("BanSeconds = %d, want 600", cfg.Security.BanSeconds)
+	}
+}
+
 func TestLoad_WOL_EmptyBroadcast(t *testing.T) {
 	content := `
 [telegram]

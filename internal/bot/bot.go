@@ -53,10 +53,79 @@ type Bot struct {
 	cfg   *config.Config
 	wg    *wireguard.Manager
 	sched *scheduler.Timer
+	rl    *rateLimiter
 
 	// rebuild пересоздаёт HTTP-транспорт Telegram API (self-healing при сбое сети).
 	// nil в тестах — тогда пересоздание отключено.
 	rebuild func() error
+}
+
+// rateLimiter — защита от спама (cooldown) и перебора доступа (бан по числу
+// неудачных попыток). Состояние — в ОЗУ процесса.
+type rateLimiter struct {
+	mu          sync.Mutex
+	lastCmd     map[int64]time.Time // chatID -> время последней принятой команды
+	failCount   map[int64]int       // chatID -> неудачные попытки доступа
+	bannedUntil map[int64]time.Time // chatID -> до какого времени забанен
+}
+
+func newRateLimiter() *rateLimiter {
+	return &rateLimiter{
+		lastCmd:     make(map[int64]time.Time),
+		failCount:   make(map[int64]int),
+		bannedUntil: make(map[int64]time.Time),
+	}
+}
+
+// banned возвращает true, если чат забанен (бан ещё не истёк).
+func (r *rateLimiter) banned(chatID int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	until, ok := r.bannedUntil[chatID]
+	if !ok {
+		return false
+	}
+	if time.Now().After(until) {
+		delete(r.bannedUntil, chatID)
+		delete(r.failCount, chatID)
+		return false
+	}
+	return true
+}
+
+// allow обновляет время последней команды и возвращает true, если команду
+// можно принять (не чаще чем cooldown от предыдущей).
+func (r *rateLimiter) allow(chatID int64, cooldown time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	last, ok := r.lastCmd[chatID]
+	now := time.Now()
+	if ok && cooldown > 0 && now.Sub(last) < cooldown {
+		return false
+	}
+	r.lastCmd[chatID] = now
+	return true
+}
+
+// recordFailure учитывает неудачную попытку доступа; при достижении max —
+// банит чат на banFor и возвращает true.
+func (r *rateLimiter) recordFailure(chatID int64, max int, banFor time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failCount[chatID]++
+	if max > 0 && r.failCount[chatID] >= max {
+		r.bannedUntil[chatID] = time.Now().Add(banFor)
+		r.failCount[chatID] = 0
+		return true
+	}
+	return false
+}
+
+// reset сбрасывает счётчик неудачных попыток после успешного доступа.
+func (r *rateLimiter) reset(chatID int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.failCount, chatID)
 }
 
 // New создаёт нового бота.
@@ -67,6 +136,7 @@ func New(api *tgbotapi.BotAPI, cfg *config.Config) *Bot {
 		api: api,
 		cfg: cfg,
 		wg:  wgMgr,
+		rl:  newRateLimiter(),
 	}
 
 	// Self-healing: пересоздаём только HTTP-клиент (транспорт), не трогая
@@ -128,6 +198,7 @@ func NewWithClient(api APIClient, cfg *config.Config, wg *wireguard.Manager, sch
 		cfg:   cfg,
 		wg:    wg,
 		sched: sched,
+		rl:    newRateLimiter(),
 	}
 }
 
@@ -161,6 +232,10 @@ func (b *Bot) getUpdates(u tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
 func (b *Bot) Run(ctx context.Context) error {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = b.pollTimeout()
+
+	// Если WG остался поднят после перезагрузки (а таймер живёт в ОЗУ и
+	// потерялся) — восстанавливаем авто-выключение, чтобы туннель не висел вечно.
+	b.restoreAutoOff()
 
 	var errCount int
 	for {
@@ -210,6 +285,28 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 }
 
+// restoreAutoOff: если интерфейс WG уже поднят, а таймер авто-выключения не
+// активен — запускаем его. Таймер хранится в ОЗУ и теряется при рестарте,
+// поэтому состояние восстанавливаем по факту состояния WG.
+func (b *Bot) restoreAutoOff() {
+	if b.sched == nil || b.sched.IsActive() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	status, err := b.wg.Show(ctx)
+	if err != nil {
+		log.Printf("[bot] restore auto-off: status check failed: %v", err)
+		return
+	}
+	if status != nil && status.Running {
+		d := time.Duration(b.cfg.Scheduler.AutoOffMinutes) * time.Minute
+		b.sched.Start(d)
+		log.Printf("[bot] auto-off restored: WG already up, timer %v", d)
+	}
+}
+
 // pollTimeout возвращает таймаут long-polling из конфига (или дефолт).
 func (b *Bot) pollTimeout() int {
 	if b.cfg != nil && b.cfg.Network.PollTimeout > 0 {
@@ -229,6 +326,22 @@ func redact(cfg *config.Config, err error) string {
 		return err.Error()
 	}
 	return strings.ReplaceAll(err.Error(), cfg.Telegram.BotToken, "***")
+}
+
+// cooldown возвращает мин. интервал между командами одного чата.
+func (b *Bot) cooldown() time.Duration {
+	if b.cfg != nil && b.cfg.Security.CommandCooldownSeconds > 0 {
+		return time.Duration(b.cfg.Security.CommandCooldownSeconds) * time.Second
+	}
+	return 2 * time.Second
+}
+
+// banDuration возвращает длительность бана за перебор доступа.
+func (b *Bot) banDuration() time.Duration {
+	if b.cfg != nil && b.cfg.Security.BanSeconds > 0 {
+		return time.Duration(b.cfg.Security.BanSeconds) * time.Second
+	}
+	return 10 * time.Minute
 }
 
 // safeHandleUpdate вызывает handleUpdate, защищая polling-цикл от паник.
@@ -265,13 +378,25 @@ func (b *Bot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
 		return
 	}
 
+	// Rate-limit: бан и cooldown
+	if b.rl.banned(update.Message.Chat.ID) {
+		return
+	}
+	if !b.rl.allow(update.Message.Chat.ID, b.cooldown()) {
+		return // слишком часто — молча игнорируем
+	}
+
 	// Проверка доступа
 	if !b.cfg.Telegram.IsAllowed(update.Message.Chat.ID, update.Message.From.ID) {
 		log.Printf("[bot] access denied: chat=%d user=%d", update.Message.Chat.ID, update.Message.From.ID)
+		if b.rl.recordFailure(update.Message.Chat.ID, b.cfg.Security.MaxFailedAttempts, b.banDuration()) {
+			log.Printf("[bot] chat=%d banned for brute-force", update.Message.Chat.ID)
+		}
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "⛔ Доступ запрещён")
 		_, _ = b.send(msg)
 		return
 	}
+	b.rl.reset(update.Message.Chat.ID)
 
 	switch {
 	case update.Message.IsCommand() && update.Message.Command() == "start":
@@ -293,11 +418,24 @@ func (b *Bot) cb(cq *tgbotapi.CallbackQuery, text string) {
 func (b *Bot) handleCallback(ctx context.Context, cq *tgbotapi.CallbackQuery) {
 	log.Printf("[bot] callback: data=%s from=%d chat=%d", cq.Data, cq.From.ID, cq.Message.Chat.ID)
 
+	// Rate-limit: бан и cooldown
+	if b.rl.banned(cq.Message.Chat.ID) {
+		b.cb(cq, "⛔ Доступ временно заблокирован")
+		return
+	}
+	if !b.rl.allow(cq.Message.Chat.ID, b.cooldown()) {
+		return // слишком часто — игнорируем
+	}
+
 	// Проверка доступа
 	if !b.cfg.Telegram.IsAllowed(cq.Message.Chat.ID, cq.From.ID) {
+		if b.rl.recordFailure(cq.Message.Chat.ID, b.cfg.Security.MaxFailedAttempts, b.banDuration()) {
+			log.Printf("[bot] chat=%d banned for brute-force", cq.Message.Chat.ID)
+		}
 		b.cb(cq, "⛔ Доступ запрещён")
 		return
 	}
+	b.rl.reset(cq.Message.Chat.ID)
 
 	// Используем командный таймаут из конфига
 	timeout := time.Duration(b.cfg.CommandTimeout) * time.Second
