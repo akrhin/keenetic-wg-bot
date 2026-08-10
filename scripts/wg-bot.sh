@@ -19,6 +19,37 @@ ensure_logdir() {
 	mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null
 }
 
+# Форматирует секунды в читаемый вид (Xd Yh Zm).
+format_uptime() {
+	local sec=$1
+	local d=$((sec / 86400))
+	local h=$(((sec % 86400) / 3600))
+	local m=$(((sec % 3600) / 60))
+	local s=$((sec % 60))
+	if [ "$d" -gt 0 ]; then
+		echo "${d}d ${h}h ${m}m"
+	elif [ "$h" -gt 0 ]; then
+		echo "${h}h ${m}m ${s}s"
+	else
+		echo "${m}m ${s}s"
+	fi
+}
+
+# Время работы процесса в секундах.
+# BusyBox-ps на Keenetic не поддерживает `-o etime=`, поэтому считаем из /proc.
+proc_uptime() {
+	local pid=$1
+	local clk start sys
+	clk=$(getconf CLK_TCK 2>/dev/null)
+	[ -z "$clk" ] && clk=100
+	start=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null)
+	sys=$(awk '{print int($1)}' /proc/uptime 2>/dev/null)
+	if [ -z "$start" ] || [ -z "$sys" ]; then
+		return 1
+	fi
+	echo $((sys - start / clk))
+}
+
 start() {
 	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
 		echo "wg-bot already running (pid $(cat "$PIDFILE"))"
@@ -69,7 +100,12 @@ restart() {
 status() {
 	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
 		PID=$(cat "$PIDFILE")
-		UPTIME=$(ps -o etime= -p "$PID" 2>/dev/null || echo "?")
+		UP=$(proc_uptime "$PID")
+		if [ -n "$UP" ]; then
+			UPTIME=$(format_uptime "$UP")
+		else
+			UPTIME="?"
+		fi
 		echo "wg-bot is running (pid $PID, uptime $UPTIME)"
 		# Проверяем, отвечает ли бот (tail log)
 		if [ -f "$LOGFILE" ]; then

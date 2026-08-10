@@ -86,6 +86,11 @@ func (m *Manager) Up(ctx context.Context) error {
 func (m *Manager) Down(ctx context.Context) error {
 	out, err := m.combExec.Run(ctx, "wg-quick", "down", m.iface)
 	if err != nil {
+		// Интерфейс уже отсутствует — штатная ситуация (например, при shutdown,
+		// когда WG и так выключен). Не считаем её ошибкой.
+		if isMissingInterface(string(out)) {
+			return nil
+		}
 		return fmt.Errorf("wg-quick down %s: %w\n%s", m.iface, err, string(out))
 	}
 	return nil
@@ -116,6 +121,7 @@ func isMissingInterface(out string) bool {
 		"no such device",
 		"unable to access interface",
 		"unknown device",
+		"is not a wireguard interface",
 	} {
 		if strings.Contains(lower, p) {
 			return true

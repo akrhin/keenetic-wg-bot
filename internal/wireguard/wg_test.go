@@ -137,6 +137,21 @@ func TestShow_RealErrorStillFails(t *testing.T) {
 	}
 }
 
+// wg-quick down на несуществующем интерфейсе — не ошибка.
+func TestDown_InterfaceMissing(t *testing.T) {
+	mgr := NewWithExecutor("wg0",
+		&mockExec{},
+		&mockExec{
+			out:   []byte{},
+			err:   errors.New("exit status 1"),
+			stder: []byte("wg-quick: `wg0' is not a WireGuard interface"),
+		},
+	)
+	if err := mgr.Down(context.Background()); err != nil {
+		t.Fatalf("expected no error for missing interface, got: %v", err)
+	}
+}
+
 func TestUp_Success(t *testing.T) {
 	mgr := NewWithExecutor("wg0",
 		&mockExec{},
